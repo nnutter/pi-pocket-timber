@@ -46,14 +46,14 @@ let lastFetchAt: number | null = null;
 let lastFetchError: string | null = null;
 let fetching = false;
 
-// Open PRs per worktree (`repo\0name` -> PR + push state), refreshed in
+// PR and push state per worktree (`repo\0name`), refreshed in
 // the background so every state poll doesn't fan out to `gh`. In-memory only.
 // NOTE: timber's ahead/behind counts against the worktree's upstream, which is
 // usually the base branch - so they measure PR scope, not push state. Push
 // state (unpushed vs origin/<branch>) is measured separately here.
 type PrEntry = {
-  number: number;
-  url: string;
+  number?: number;
+  url?: string;
   destExists: boolean;
   unpushed: number;
   ff: boolean;
@@ -342,23 +342,24 @@ async function pushInfo(
     ["rev-parse", "--verify", "--quiet", `refs/remotes/${dest}`],
     cwd,
   );
-  if (verify.code !== 0) return { destExists: false, unpushed: 0, ff: false };
+  const destExists = verify.code === 0;
   let unpushed = 0;
   const count = await runCmd(
     "git",
-    ["rev-list", "--count", `${dest}..HEAD`],
+    ["rev-list", "--count", `${destExists ? dest : "@{u}"}..HEAD`],
     cwd,
   );
   if (count.code === 0) {
     const n = parseInt(count.stdout.trim(), 10);
     if (Number.isFinite(n) && n >= 0) unpushed = n;
   }
+  if (!destExists) return { destExists, unpushed, ff: true };
   const base = await runCmd(
     "git",
     ["merge-base", "--is-ancestor", dest, "HEAD"],
     cwd,
   );
-  return { destExists: true, unpushed, ff: base.code === 0 };
+  return { destExists, unpushed, ff: base.code === 0 };
 }
 
 async function openOrCreatePr(
@@ -709,9 +710,9 @@ export default function createTimber(host: unknown, web: Web) {
             runCmd("gh", ["pr", "view", "--json", "number,url,state"], w.path),
             pushInfo(w.path, w.name),
           ]);
-          if (viewed.code !== 0) return null;
           try {
-            const parsed: unknown = JSON.parse(viewed.stdout);
+            const parsed: unknown =
+              viewed.code === 0 ? JSON.parse(viewed.stdout) : null;
             if (
               isRecord(parsed) &&
               parsed["state"] === "OPEN" &&
@@ -732,7 +733,7 @@ export default function createTimber(host: unknown, web: Web) {
           } catch {
             // No PR (or unreadable output): treated as none.
           }
-          return null;
+          return [key, push] as const;
         }),
       );
       const map: Record<string, PrEntry> = {};
@@ -910,21 +911,7 @@ export default function createTimber(host: unknown, web: Web) {
       // Re-verify everything fresh: the panel's counts may be stale, and
       // timber's ahead/behind counts against the base-branch upstream, not
       // the push destination, so push state is measured directly with git.
-      const view = await runCmd(
-        "gh",
-        ["pr", "view", "--json", "number,url"],
-        found.path,
-      );
-      if (view.code !== 0) {
-        throw web.error(409, `No pull request is open for ${name}@${repo}`);
-      }
       const push = await pushInfo(found.path, name);
-      if (!push.destExists) {
-        throw web.error(
-          409,
-          `No remote branch origin/${name} to push to for ${name}@${repo}`,
-        );
-      }
       if (push.unpushed === 0) {
         throw web.error(409, `Nothing to push for ${name}@${repo}`);
       }
@@ -948,6 +935,7 @@ export default function createTimber(host: unknown, web: Web) {
           pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
         );
       }
+      prCache = null;
       return { pushed: true };
     } catch (error) {
       if (error instanceof Error && "status" in error) throw error;

@@ -620,14 +620,10 @@ export default function setup(pocket) {
             (prLinks[key] && prLinks[key].url) ||
             (cachePr && cachePr.url),
           );
-          // Push state comes from git vs origin/<branch>, NOT timber's
-          // ahead/behind: those count against the base-branch upstream.
+          // Compare with origin/<branch> when it exists. For a new remote
+          // branch, compare with the upstream to find commits to publish.
           const canUpload = Boolean(
-            cachePr &&
-            cachePr.destExists &&
-            cachePr.unpushed > 0 &&
-            cachePr.ff &&
-            !w.statusError,
+            cachePr && cachePr.unpushed > 0 && cachePr.ff && !w.statusError,
           );
           const kind = w.merged
             ? "merged"
@@ -793,9 +789,9 @@ export default function setup(pocket) {
                         aria-disabled=${listingBusy || undefined}
                         onClick=${() => {
                           if (listingBusy) return;
-                          if (cachePr || prLinks[key]) {
+                          if (cachePr?.url || prLinks[key]) {
                             window.open(
-                              (cachePr || prLinks[key]).url,
+                              (cachePr?.url ? cachePr : prLinks[key]).url,
                               "_blank",
                               "noopener",
                             );
