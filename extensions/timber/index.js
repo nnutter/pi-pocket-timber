@@ -35,6 +35,10 @@ export default function setup(pocket) {
     const [error, setError] = useState(null);
     const [notice, setNotice] = useState("");
     const [busy, setBusy] = useState(false);
+    // True while a background list reload is in flight. Row buttons lock
+    // so a tap can't land on a row that is about to move.
+    const [listingBusy, setListingBusy] = useState(false);
+    const listingCount = useRef(0);
     const [search, setSearch] = useState("");
     const [sort, setSort] = useState("recent");
     const [creating, setCreating] = useState(false);
@@ -80,6 +84,8 @@ export default function setup(pocket) {
     useEffect(() => {
       let alive = true;
       const load = async () => {
+        listingCount.current += 1;
+        if (alive) setListingBusy(true);
         try {
           const state = await pocket.api("state");
           if (alive) {
@@ -91,6 +97,9 @@ export default function setup(pocket) {
             setError(
               failure && failure.message ? failure.message : "Timber failed",
             );
+        } finally {
+          listingCount.current -= 1;
+          if (alive && listingCount.current === 0) setListingBusy(false);
         }
       };
       void load();
@@ -610,7 +619,10 @@ export default function setup(pocket) {
                 disabled=${busy}
                 title=${`Open session in ${w.path}`}
                 aria-label=${`Open session in ${w.name}@${w.repo}`}
-                onClick=${() => doOpen(w)}
+                aria-disabled=${listingBusy || undefined}
+                onClick=${() => {
+                  if (!listingBusy) doOpen(w);
+                }}
                 style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px" }}
               >
                 <${Icon} name="chat" size=${16} />
@@ -671,13 +683,16 @@ export default function setup(pocket) {
                   ? html`<button
                       class="button small"
                       disabled=${busy}
+                      aria-disabled=${listingBusy || undefined}
                       title=${
                         armed
                           ? `Click again to delete ${w.name}@${w.repo} within 5s`
                           : `Remove ${w.name}@${w.repo}`
                       }
                       aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
-                      onClick=${() => doRemove(w)}
+                      onClick=${() => {
+                        if (!listingBusy) doRemove(w);
+                      }}
                       style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                     >
                       ${armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`}
@@ -691,7 +706,10 @@ export default function setup(pocket) {
                           : `Open or create a PR for ${w.name}@${w.repo}`
                       }
                       aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                      onClick=${() => doPr(w)}
+                      aria-disabled=${listingBusy || undefined}
+                      onClick=${() => {
+                        if (!listingBusy) doPr(w);
+                      }}
                       style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                     >
                       <svg
