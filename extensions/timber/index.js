@@ -436,9 +436,14 @@ export default function setup(pocket) {
             ? html`<span
                 class="small muted"
                 title=${data.fetchError ? data.fetchError : "Worktrees and remotes refreshed"}
+                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px", whiteSpace: "nowrap" }}
                 >${timeAgo(data.fetchedAt)}</span
               >`
-            : html`<span class="small">Stale</span>`
+            : html`<span
+                class="small"
+                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px" }}
+                >Stale</span
+              >`
         }
       </div>
 
