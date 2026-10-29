@@ -827,7 +827,8 @@ export default function setup(pocket) {
                   display: "flex",
                   alignItems: "center",
                   gap: "6px",
-                  flexWrap: "wrap",
+                  flexWrap: "nowrap",
+                  overflow: "hidden",
                   position: "relative",
                 }}
               >
@@ -847,13 +848,13 @@ export default function setup(pocket) {
                 <span
                   class="muted mono"
                   title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
-                  style=${{ ...ROW_ITEM, minWidth: "30px" }}
+                  style=${{ ...ROW_ITEM, flex: "1 1 0" }}
                   >↑${w.ahead ?? 0}</span
                 >
                 <span
                   class="muted mono"
                   title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
-                  style=${{ ...ROW_ITEM, minWidth: "30px" }}
+                  style=${{ ...ROW_ITEM, flex: "1 1 0" }}
                   >↓${w.behind ?? 0}</span
                 >
                 ${
@@ -861,7 +862,7 @@ export default function setup(pocket) {
                   html`<span
                     class="muted"
                     title=${`TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`}
-                    style=${{ ...ROW_ITEM, gap: "4px", minWidth: "44px" }}
+                    style=${{ ...ROW_ITEM, gap: "4px", flex: "1 1 0" }}
                   >
                     <${Icon} name="check" size=${14} />
                     ${w.todoDone ?? 0}/${w.todoTotal}
@@ -874,7 +875,7 @@ export default function setup(pocket) {
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ ...ROW_ITEM, gap: "4px", minWidth: "44px" }}
+                  style=${{ ...ROW_ITEM, gap: "4px", flex: "1 1 0" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
@@ -886,18 +887,18 @@ export default function setup(pocket) {
                         href=${prLinks[key].url}
                         target="_blank"
                         rel="noreferrer"
-                        style=${{ ...ROW_ITEM, overflow: "hidden", textOverflow: "ellipsis" }}
+                        style=${{ ...ROW_ITEM, flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis" }}
                         >PR #${prLinks[key].number}</a
                       >`
                     : w.pullRequest &&
                       html`<span
                         class="muted"
-                        style=${{ ...ROW_ITEM, overflow: "hidden", textOverflow: "ellipsis" }}
+                        style=${{ ...ROW_ITEM, flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis" }}
                         >PR ${w.pullRequest}</span
                       >`
                 }
                 <div
-                  style=${{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto" }}
+                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto" }}
                 >
                   <span
                     style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
