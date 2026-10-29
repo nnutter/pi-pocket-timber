@@ -69,18 +69,21 @@ export default function setup(pocket) {
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
     const confirmTimer = useRef(null);
-    const [menuOpen, setMenuOpen] = useState(false);
-    const addRef = useRef(null);
+    // The id of the open popover ("add"), or null. Each popover's anchor
+    // element is kept in menuAnchors so an outside tap can close it.
+    const [openMenu, setOpenMenu] = useState(null);
+    const menuAnchors = useRef({});
 
     useEffect(() => {
-      if (!menuOpen) return undefined;
+      if (openMenu === null) return undefined;
+      const anchor = menuAnchors.current[openMenu];
       const onDown = (event) => {
-        if (addRef.current && !addRef.current.contains(event.target)) {
-          setMenuOpen(false);
+        if (anchor && !anchor.contains(event.target)) {
+          setOpenMenu(null);
         }
       };
       const onKey = (event) => {
-        if (event.key === "Escape") setMenuOpen(false);
+        if (event.key === "Escape") setOpenMenu(null);
       };
       document.addEventListener("pointerdown", onDown);
       document.addEventListener("keydown", onKey);
@@ -88,7 +91,7 @@ export default function setup(pocket) {
         document.removeEventListener("pointerdown", onDown);
         document.removeEventListener("keydown", onKey);
       };
-    }, [menuOpen]);
+    }, [openMenu]);
 
     // A button's content, or a spinner in its place while its action runs.
     const inFlight = (id, label, content) =>
@@ -542,7 +545,9 @@ export default function setup(pocket) {
           style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) 110px", gap: "8px" }}
         >
           <div
-            ref=${addRef}
+            ref=${(el) => {
+              menuAnchors.current.add = el;
+            }}
             style=${{ position: "relative", display: "inline-flex", flex: "none" }}
           >
             <div
@@ -555,7 +560,7 @@ export default function setup(pocket) {
                 title="New worktree"
                 aria-label="New worktree"
                 onClick=${() => {
-                  setMenuOpen(false);
+                  setOpenMenu(null);
                   setCreating((v) => !v);
                 }}
                 style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
@@ -584,8 +589,8 @@ export default function setup(pocket) {
                 title="More ways to add"
                 aria-label="More ways to add"
                 aria-haspopup="menu"
-                aria-expanded=${menuOpen}
-                onClick=${() => setMenuOpen((v) => !v)}
+                aria-expanded=${openMenu === "add"}
+                onClick=${() => setOpenMenu(openMenu === "add" ? null : "add")}
                 style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
               >
                 <svg
@@ -602,7 +607,7 @@ export default function setup(pocket) {
               </button>
             </div>
             ${
-              menuOpen &&
+              openMenu === "add" &&
               html`<div
                 role="menu"
                 style=${{ position: "absolute", top: "calc(100% + 4px)", left: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
@@ -612,7 +617,7 @@ export default function setup(pocket) {
                   role="menuitem"
                   style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
                   onClick=${() => {
-                    setMenuOpen(false);
+                    setOpenMenu(null);
                     setAdding(true);
                   }}
                 >
