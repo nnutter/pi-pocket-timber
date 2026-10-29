@@ -37,11 +37,18 @@ export default function setup(pocket) {
     };
   }
 
+  /** The pending-action id for a verb on one worktree row. */
+  function rowAction(verb, w) {
+    return `${verb}\0${w.repo}\0${w.name}`;
+  }
+
   function TimberPage() {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
     const [notice, setNotice] = useState("");
-    const [busy, setBusy] = useState(false);
+    // The id of the action in flight, or null when idle. Any action locks the page.
+    const [pending, setPending] = useState(null);
+    const busy = pending !== null;
     // True while a background list reload is in flight. Row buttons lock
     // so a tap can't land on a row that is about to move.
     const [listingBusy, setListingBusy] = useState(false);
@@ -64,7 +71,7 @@ export default function setup(pocket) {
     const confirmTimer = useRef(null);
 
     const doRefresh = async () => {
-      setBusy(true);
+      setPending("refresh");
       setNotice("");
       try {
         await pocket.api("fetch", {}, { method: "POST" });
@@ -78,7 +85,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Refresh failed",
         );
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
@@ -146,7 +153,7 @@ export default function setup(pocket) {
         setError("Select a repository first.");
         return;
       }
-      setBusy(true);
+      setPending("create");
       setNotice("");
       try {
         const result = await pocket.api(
@@ -166,7 +173,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Create failed",
         );
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
@@ -176,7 +183,7 @@ export default function setup(pocket) {
         setError("Enter a repository URL or path.");
         return;
       }
-      setBusy(true);
+      setPending("add");
       setNotice("");
       try {
         const result = await pocket.api(
@@ -195,7 +202,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Add failed");
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
@@ -207,7 +214,7 @@ export default function setup(pocket) {
       }
       setConfirmKey(null);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      setBusy(true);
+      setPending(rowAction("remove", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -224,7 +231,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Remove failed",
         );
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
@@ -238,7 +245,7 @@ export default function setup(pocket) {
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      setBusy(true);
+      setPending(rowAction("open", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -254,12 +261,12 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Open failed");
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
     const doPr = async (worktree, title, body, tab) => {
-      setBusy(true);
+      setPending(rowAction("pr", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -288,12 +295,12 @@ export default function setup(pocket) {
         if (tab && !tab.closed) tab.close();
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
     const doPush = async (worktree) => {
-      setBusy(true);
+      setPending(rowAction("push", worktree));
       setNotice("");
       try {
         await pocket.api(
@@ -309,7 +316,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Push failed");
       } finally {
-        setBusy(false);
+        setPending(null);
       }
     };
 
