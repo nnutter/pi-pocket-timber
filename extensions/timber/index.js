@@ -587,14 +587,6 @@ export default function setup(pocket) {
           </select>
         </div>
 
-        <div
-          class="small muted"
-          aria-live="polite"
-          style=${{ textAlign: "right" }}
-        >
-          ${data ? `${filtered.length} of ${worktrees.length} worktrees` : ""}
-        </div>
-
         ${
           data &&
           filtered.length === 0 &&
@@ -909,6 +901,12 @@ export default function setup(pocket) {
           paddingTop: "10px",
         }}
       >
+        <span
+          class="small muted"
+          aria-live="polite"
+          style=${{ marginRight: "auto" }}
+          >${data ? `${filtered.length} of ${worktrees.length} worktrees` : ""}</span
+        >
         ${
           data
             ? html`<span
