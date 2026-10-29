@@ -69,6 +69,26 @@ export default function setup(pocket) {
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
     const confirmTimer = useRef(null);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const addRef = useRef(null);
+
+    useEffect(() => {
+      if (!menuOpen) return undefined;
+      const onDown = (event) => {
+        if (addRef.current && !addRef.current.contains(event.target)) {
+          setMenuOpen(false);
+        }
+      };
+      const onKey = (event) => {
+        if (event.key === "Escape") setMenuOpen(false);
+      };
+      document.addEventListener("pointerdown", onDown);
+      document.addEventListener("keydown", onKey);
+      return () => {
+        document.removeEventListener("pointerdown", onDown);
+        document.removeEventListener("keydown", onKey);
+      };
+    }, [menuOpen]);
 
     // A button's content, or a spinner in its place while its action runs.
     const inFlight = (id, label, content) =>
@@ -378,54 +398,6 @@ export default function setup(pocket) {
       <div
         style=${{ flex: "1", minHeight: "0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" }}
       >
-        <div style=${{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button
-            class="button small"
-            disabled=${busy || !data || data.repositories.length === 0}
-            title="New worktree"
-            aria-label="New worktree"
-            onClick=${() => setCreating((v) => !v)}
-            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-              aria-hidden="true"
-              style=${{ flexShrink: 0 }}
-            >
-              <path
-                d="M7.122.392a1.75 1.75 0 0 1 1.756 0l5.003 2.902c.83.481.83 1.68 0 2.162L8.878 8.358a1.75 1.75 0 0 1-1.756 0L2.119 5.456a1.25 1.25 0 0 1 0-2.162ZM8.125 1.69a.25.25 0 0 0-.25 0L3.244 4.375 7.875 7.06a.25.25 0 0 0 .25 0l4.63-2.685ZM1.602 7.789a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296L1.874 8.813a.75.75 0 0 1-.272-1.024m0 3.5a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296l-5.248-3.044a.75.75 0 0 1-.272-1.024M11.75 15.25v-2h-2a.75.75 0 0 1 0-1.5h2v-2a.75.75 0 0 1 1.5 0v2h2a.75.75 0 0 1 0 1.5h-2v2a.75.75 0 0 1-1.5 0"
-              />
-            </svg>
-          </button>
-          <button
-            class="button small"
-            disabled=${busy || !data}
-            title="Add repository"
-            aria-label="Add repository"
-            onClick=${() => setAdding((v) => !v)}
-            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-              aria-hidden="true"
-              style=${{ flexShrink: 0 }}
-            >
-              <path
-                d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .75.75V6a.75.75 0 0 1-1.5 0V1.5h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 3.5 9h3a.75.75 0 0 1 0 1.5h-3a1 1 0 0 0 0 2h3a.75.75 0 0 1 0 1.5h-3A2.5 2.5 0 0 1 1 11.5v-9Z"
-              />
-              <path
-                d="M12.21 13.479a.75.75 0 1 0 1.061 1.061l2.504-2.505a.75.75 0 0 0 0-1.061L13.271 8.47a.75.75 0 0 0-1.061 1.06l1.224 1.225H8.75a.75.75 0 1 0 0 1.5h4.685l-1.225 1.224Z"
-              />
-            </svg>
-          </button>
-        </div>
-
         ${error && html`<div class="error-box">${error}</div>`}
         ${notice && html`<div class="small" role="status">${notice}</div>`}
         ${
@@ -567,8 +539,103 @@ export default function setup(pocket) {
         }
 
         <div
-          style=${{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 110px", gap: "8px" }}
+          style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) 110px", gap: "8px" }}
         >
+          <div
+            ref=${addRef}
+            style=${{ position: "relative", display: "inline-flex", flex: "none" }}
+          >
+            <div
+              style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+            >
+              <button
+                type="button"
+                class="button small"
+                disabled=${busy || !data || data.repositories.length === 0}
+                title="New worktree"
+                aria-label="New worktree"
+                onClick=${() => {
+                  setMenuOpen(false);
+                  setCreating((v) => !v);
+                }}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  style=${{ flexShrink: 0 }}
+                >
+                  <path
+                    d="M7.122.392a1.75 1.75 0 0 1 1.756 0l5.003 2.902c.83.481.83 1.68 0 2.162L8.878 8.358a1.75 1.75 0 0 1-1.756 0L2.119 5.456a1.25 1.25 0 0 1 0-2.162ZM8.125 1.69a.25.25 0 0 0-.25 0L3.244 4.375 7.875 7.06a.25.25 0 0 0 .25 0l4.63-2.685ZM1.602 7.789a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296L1.874 8.813a.75.75 0 0 1-.272-1.024m0 3.5a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296l-5.248-3.044a.75.75 0 0 1-.272-1.024M11.75 15.25v-2h-2a.75.75 0 0 1 0-1.5h2v-2a.75.75 0 0 1 1.5 0v2h2a.75.75 0 0 1 0 1.5h-2v2a.75.75 0 0 1-1.5 0"
+                  />
+                </svg>
+              </button>
+              <span
+                aria-hidden="true"
+                style=${{ width: "1px", background: "var(--line)" }}
+              ></span>
+              <button
+                type="button"
+                class="button small"
+                disabled=${busy}
+                title="More ways to add"
+                aria-label="More ways to add"
+                aria-haspopup="menu"
+                aria-expanded=${menuOpen}
+                onClick=${() => setMenuOpen((v) => !v)}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
+                  />
+                </svg>
+              </button>
+            </div>
+            ${
+              menuOpen &&
+              html`<div
+                role="menu"
+                style=${{ position: "absolute", top: "calc(100% + 4px)", left: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
+                  onClick=${() => {
+                    setMenuOpen(false);
+                    setAdding(true);
+                  }}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    aria-hidden="true"
+                    style=${{ flexShrink: 0 }}
+                  >
+                    <path
+                      d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .75.75V6a.75.75 0 0 1-1.5 0V1.5h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 3.5 9h3a.75.75 0 0 1 0 1.5h-3a1 1 0 0 0 0 2h3a.75.75 0 0 1 0 1.5h-3A2.5 2.5 0 0 1 1 11.5v-9Z"
+                    />
+                    <path
+                      d="M12.21 13.479a.75.75 0 1 0 1.061 1.061l2.504-2.505a.75.75 0 0 0 0-1.061L13.271 8.47a.75.75 0 0 0-1.061 1.06l1.224 1.225H8.75a.75.75 0 1 0 0 1.5h4.685l-1.225 1.224Z"
+                    />
+                  </svg>
+                  <span>Import repo</span>
+                </button>
+              </div>`
+            }
+          </div>
           <input
             type="search"
             aria-label="Find worktrees"
