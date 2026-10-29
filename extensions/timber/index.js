@@ -10,6 +10,13 @@ export default function setup(pocket) {
   function badgeStyle(kind) {
     if (kind === "merged")
       return {
+        background: "#8957e5",
+        color: "var(--text)",
+        borderRadius: "4px",
+        padding: "2px 8px",
+      };
+    if (kind === "clean-pr")
+      return {
         background: "color-mix(in srgb, var(--ok) 18%, transparent)",
         color: "var(--ok)",
         borderRadius: "4px",
@@ -579,7 +586,16 @@ export default function setup(pocket) {
         ${filtered.map((w) => {
           const key = `${w.repo}\0${w.name}`;
           const armed = confirmKey === key;
-          const kind = w.merged ? "merged" : !w.clean ? "dirty" : "clean";
+          const hasPr = Boolean(
+            w.pullRequest || (prLinks[key] && prLinks[key].url),
+          );
+          const kind = w.merged
+            ? "merged"
+            : !w.clean
+              ? "dirty"
+              : hasPr
+                ? "clean-pr"
+                : "clean";
           const label = w.merged ? "Merged" : !w.clean ? "Dirty" : "Clean";
           return html`<li
             key=${`${w.repo}/${w.name}`}
