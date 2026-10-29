@@ -1,0 +1,7 @@
+# mdlint configuration. See mdlint.default.toml in the mdlint repository
+# for the full annotated reference.
+
+# MD013 (line length) disabled: long URLs and table rows are common and
+# the formatter does not wrap prose, so the rule is noise here.
+[rules.MD013]
+enabled = false

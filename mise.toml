@@ -1,0 +1,52 @@
+[tools]
+go = "latest"
+hk = "2.8.0"
+node = "latest"
+pkl = "latest"
+prettier = "latest"
+tombi = "latest"
+yamlfmt = "latest"
+gitleaks = "latest"
+"go:github.com/nnutter/timber" = "latest"
+"github:nnutter/mdlint" = "latest"
+
+[tasks.all]
+description = "Run fix and check"
+run = [{ task = "fix" }, { task = "check" }]
+
+[tasks.setup]
+description = "Install hk git hooks"
+run = "hk install --mise"
+
+[tasks.pre-commit]
+description = "Run the staged hk pre-commit hook"
+run = "hk run pre-commit"
+
+[tasks.fix]
+description = "Fix all files, or safely fix only the supplied files"
+usage = 'arg "[staged_files]" var=#true'
+# Prettier is file-scoped, so a scoped fix is safe: it only touches the
+# supplied files. The explicit all-files hook runs the same step over all.
+run = '''
+if [ -z "${usage_staged_files:-}" ]; then
+  hk run fix-all --all
+else
+  hk fix ${usage_staged_files}
+fi
+'''
+
+[tasks.check]
+description = "Check all files without writing fixes"
+run = "hk check --all"
+
+[tasks.on-start]
+description = "Pi mise-hooks: run fix and check before agent starts"
+run = [{ task = "all" }]
+
+[tasks.on-stop]
+description = "Pi mise-hooks: fix edited files, then check"
+usage = 'arg "[staged_files]" var=#true'
+run = [
+  "mise run fix ${usage_staged_files}",
+  "mise run check",
+]
