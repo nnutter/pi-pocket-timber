@@ -37,12 +37,23 @@ type State = {
   at: number;
   fetchedAt: number | null;
   fetchError: string | null;
+  prs: Record<string, { number: number; url: string }>;
+  prsAt: number | null;
 };
 
 // Last background `timber git @repo -- fetch` run. In-memory only: a reload refetches.
 let lastFetchAt: number | null = null;
 let lastFetchError: string | null = null;
 let fetching = false;
+
+// Open PRs per worktree (`repo\0name` -> { number, url }), refreshed in the
+// background so every state poll doesn't fan out to `gh`. In-memory only.
+let prCache: {
+  at: number;
+  map: Record<string, { number: number; url: string }>;
+} | null = null;
+let prRefreshing = false;
+const PR_CACHE_TTL = 60_000;
 
 async function runCmd(
   cmd: string,
@@ -633,15 +644,69 @@ export default function createTimber(host: unknown, web: Web) {
     return allowed[0];
   };
 
+  // Refresh the open-PR cache in the background and tell tabs to re-read
+  // state when it lands. Stale-while-revalidate: state serves the cache
+  // immediately and only one refresh runs at a time.
+  const refreshPrCache = async (worktrees: Worktree[]): Promise<void> => {
+    if (prRefreshing) return;
+    prRefreshing = true;
+    try {
+      const entries = await Promise.all(
+        worktrees.map(async (w) => {
+          const key = `${w.repo}\0${w.name}`;
+          const result = await runCmd(
+            "gh",
+            ["pr", "view", "--json", "number,url"],
+            w.path,
+          );
+          if (result.code !== 0) return null;
+          try {
+            const parsed: unknown = JSON.parse(result.stdout);
+            if (
+              isRecord(parsed) &&
+              typeof parsed["url"] === "string" &&
+              typeof parsed["number"] === "number"
+            ) {
+              return [
+                key,
+                { number: parsed["number"], url: parsed["url"] },
+              ] as const;
+            }
+          } catch {
+            // No PR (or unreadable output): treated as none.
+          }
+          return null;
+        }),
+      );
+      const map: Record<string, { number: number; url: string }> = {};
+      for (const entry of entries) {
+        if (entry) map[entry[0]] = entry[1];
+      }
+      prCache = { at: Date.now(), map };
+      try {
+        web.send("fetched", { at: prCache.at });
+      } catch {
+        // Tabs may be gone; the next poll picks up the fresh listing.
+      }
+    } finally {
+      prRefreshing = false;
+    }
+  };
+
   web.route("GET", "state", async (): Promise<State & { models: string[] }> => {
     try {
       const listing = await readListing();
+      if (!prCache || Date.now() - prCache.at > PR_CACHE_TTL) {
+        void refreshPrCache(listing.worktrees);
+      }
       return {
         ...listing,
         at: Date.now(),
         fetchedAt: lastFetchAt,
         fetchError: lastFetchError,
         models: allowedModels(),
+        prs: prCache?.map ?? {},
+        prsAt: prCache?.at ?? null,
       };
     } catch (error) {
       throw web.error(
@@ -735,6 +800,56 @@ export default function createTimber(host: unknown, web: Web) {
       }
     },
   );
+
+  web.route("POST", "push", async ({ body }): Promise<{ pushed: boolean }> => {
+    try {
+      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+      const name = typeof body["name"] === "string" ? body["name"] : "";
+      checkRepoName(repo);
+      checkBranchName(name, "worktree name");
+      const listing = await readListing();
+      const found = listing.worktrees.find(
+        (w) => w.repo === repo && w.name === name,
+      );
+      if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
+      if (found.statusError) {
+        throw web.error(409, "Git status unknown; refresh and inspect first");
+      }
+      // Re-verify against a fresh listing: the panel's counts may be stale.
+      const view = await runCmd(
+        "gh",
+        ["pr", "view", "--json", "number,url"],
+        found.path,
+      );
+      if (view.code !== 0) {
+        throw web.error(409, `No pull request is open for ${name}@${repo}`);
+      }
+      if ((found.ahead ?? 0) === 0) {
+        throw web.error(409, `Nothing to push for ${name}@${repo}`);
+      }
+      if ((found.behind ?? 0) !== 0) {
+        throw web.error(
+          409,
+          `${name}@${repo} is behind; fetch first so the push stays a fast-forward`,
+        );
+      }
+      // Plain `git push` refuses non-fast-forward updates on its own
+      // (there is no --ff-only flag on push; that is merge/fetch): if the
+      // remote moved since the listing was read, this fails atomically
+      // instead of pushing.
+      const pushed = await runCmd("git", ["push"], found.path, 180_000);
+      if (pushed.code !== 0) {
+        throw new Error(
+          pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+        );
+      }
+      return { pushed: true };
+    } catch (error) {
+      if (error instanceof Error && "status" in error) throw error;
+      const message = error instanceof Error ? error.message : "push failed";
+      throw web.error(502, message);
+    }
+  });
 
   web.route(
     "POST",

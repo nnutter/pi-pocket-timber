@@ -285,6 +285,27 @@ export default function setup(pocket) {
       }
     };
 
+    const doPush = async (worktree) => {
+      setBusy(true);
+      setNotice("");
+      try {
+        await pocket.api(
+          "push",
+          { repo: worktree.repo, name: worktree.name },
+          { method: "POST" },
+        );
+        const state = await pocket.api("state");
+        setData(state);
+        setError(
+          state.fetchError ? `Fetch reported: ${state.fetchError}` : null,
+        );
+      } catch (failure) {
+        setError(failure && failure.message ? failure.message : "Push failed");
+      } finally {
+        setBusy(false);
+      }
+    };
+
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
     const filtered = worktrees
@@ -589,6 +610,13 @@ export default function setup(pocket) {
           const hasPr = Boolean(
             w.pullRequest || (prLinks[key] && prLinks[key].url),
           );
+          const cachePr = data && data.prs ? data.prs[key] : null;
+          const knownPr = hasPr || Boolean(cachePr && cachePr.url);
+          const canUpload =
+            knownPr &&
+            !w.statusError &&
+            (w.ahead ?? 0) > 0 &&
+            (w.behind ?? 0) === 0;
           const kind = w.merged
             ? "merged"
             : !w.clean
@@ -713,34 +741,62 @@ export default function setup(pocket) {
                     >
                       ${armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`}
                     </button>`
-                  : html`<button
-                      class="button small"
-                      disabled=${busy || w.statusError}
-                      title=${
-                        w.statusError
-                          ? "Git status unknown"
-                          : `Open or create a PR for ${w.name}@${w.repo}`
-                      }
-                      aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                      aria-disabled=${listingBusy || undefined}
-                      onClick=${() => {
-                        if (!listingBusy) doPr(w);
-                      }}
-                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        aria-hidden="true"
-                        style=${{ flexShrink: 0 }}
+                  : canUpload
+                    ? html`<button
+                        class="button small"
+                        disabled=${busy}
+                        aria-disabled=${listingBusy || undefined}
+                        title=${`Push ${w.ahead ?? 0} commit${(w.ahead ?? 0) === 1 ? "" : "s"} for ${w.name}@${w.repo}`}
+                        aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
+                        onClick=${() => {
+                          if (!listingBusy) doPush(w);
+                        }}
+                        style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                       >
-                        <path
-                          d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                        />
-                      </svg>
-                    </button>`
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 16 16"
+                          fill="currentColor"
+                          aria-hidden="true"
+                          style=${{ flexShrink: 0 }}
+                        >
+                          <path
+                            d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
+                          />
+                          <path
+                            d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
+                          />
+                        </svg>
+                      </button>`
+                    : html`<button
+                        class="button small"
+                        disabled=${busy || w.statusError}
+                        title=${
+                          w.statusError
+                            ? "Git status unknown"
+                            : `Open or create a PR for ${w.name}@${w.repo}`
+                        }
+                        aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
+                        aria-disabled=${listingBusy || undefined}
+                        onClick=${() => {
+                          if (!listingBusy) doPr(w);
+                        }}
+                        style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                      >
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 16 16"
+                          fill="currentColor"
+                          aria-hidden="true"
+                          style=${{ flexShrink: 0 }}
+                        >
+                          <path
+                            d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                          />
+                        </svg>
+                      </button>`
               }
             </div>
             ${

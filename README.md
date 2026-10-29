@@ -29,6 +29,7 @@ The files follow the gallery layout (`timber.ts` + `timber/` browser folder, no 
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`
+- **Upload**: when a PR is open and the worktree is ahead with nothing behind, push with plain `git push`, which refuses non-fast-forwards on its own (never force)
 - **Refresh**: lists worktrees and fetches all remotes; auto-fetch every 5 minutes so merged branches flip to Merged
 - Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`
 
