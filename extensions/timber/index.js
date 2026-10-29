@@ -370,6 +370,7 @@ export default function setup(pocket) {
         display: "flex",
         flexDirection: "column",
         gap: "10px",
+        minHeight: "100%",
         padding: "12px",
         fontSize: "13px",
       }}
@@ -420,31 +421,6 @@ export default function setup(pocket) {
             />
           </svg>
         </button>
-        <span style=${{ flex: "1" }}></span>
-        <button
-          class="button small"
-          disabled=${busy}
-          title="Refresh: list worktrees and fetch all remotes"
-          aria-label="Refresh"
-          onClick=${doRefresh}
-          style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-        >
-          ${inFlight("refresh", "Refresh", html`<${Icon} name="reload" size=${16} />`)}
-        </button>
-        ${
-          data
-            ? html`<span
-                class="small muted"
-                title=${data.fetchError ? data.fetchError : "Worktrees and remotes refreshed"}
-                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px", whiteSpace: "nowrap" }}
-                >${timeAgo(data.fetchedAt)}</span
-              >`
-            : html`<span
-                class="small"
-                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px" }}
-                >Stale</span
-              >`
-        }
       </div>
 
       ${error && html`<div class="error-box">${error}</div>`}
@@ -914,6 +890,35 @@ export default function setup(pocket) {
           </li>`;
         })}
       </ul>
+
+      <div
+        style=${{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginTop: "auto" }}
+      >
+        ${
+          data
+            ? html`<span
+                class="small muted"
+                title=${data.fetchError ? data.fetchError : "Worktrees and remotes refreshed"}
+                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px", textAlign: "right", whiteSpace: "nowrap" }}
+                >${timeAgo(data.fetchedAt)}</span
+              >`
+            : html`<span
+                class="small"
+                style=${{ display: "inline-block", minWidth: "8ch", paddingRight: "6px", textAlign: "right" }}
+                >Stale</span
+              >`
+        }
+        <button
+          class="button small"
+          disabled=${busy}
+          title="Refresh: list worktrees and fetch all remotes"
+          aria-label="Refresh"
+          onClick=${doRefresh}
+          style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+        >
+          ${inFlight("refresh", "Refresh", html`<${Icon} name="reload" size=${16} />`)}
+        </button>
+      </div>
     </section>`;
   }
 
