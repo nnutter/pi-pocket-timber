@@ -826,7 +826,7 @@ export default function setup(pocket) {
                 style=${{
                   display: "flex",
                   alignItems: "center",
-                  gap: "6px",
+                  gap: "10px",
                   flexWrap: "nowrap",
                   overflowX: "auto",
                   paddingRight: "2px",
@@ -848,13 +848,16 @@ export default function setup(pocket) {
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
                 <span
-                  style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
-                  >${label}</span
+                  class="muted mono"
+                  title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
+                  style=${{ ...ROW_ITEM, minWidth: "34px" }}
+                  >↑${w.ahead ?? 0}</span
                 >
                 <span
                   class="muted mono"
-                  style=${{ ...ROW_ITEM, minWidth: "58px" }}
-                  >↑${w.ahead ?? 0} ↓${w.behind ?? 0}</span
+                  title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
+                  style=${{ ...ROW_ITEM, minWidth: "34px" }}
+                  >↓${w.behind ?? 0}</span
                 >
                 ${
                   w.todoTotal !== undefined &&
@@ -897,6 +900,10 @@ export default function setup(pocket) {
                       >`
                 }
                 <span style=${{ flex: "1", minWidth: "6px" }}></span>
+                <span
+                  style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
+                  >${label}</span
+                >
                 ${
                   safeToRemove(w)
                     ? html`<button
