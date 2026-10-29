@@ -37,7 +37,7 @@ type State = {
   at: number;
   fetchedAt: number | null;
   fetchError: string | null;
-  prs: Record<string, { number: number; url: string }>;
+  prs: Record<string, PrEntry>;
   prsAt: number | null;
 };
 
@@ -46,11 +46,21 @@ let lastFetchAt: number | null = null;
 let lastFetchError: string | null = null;
 let fetching = false;
 
-// Open PRs per worktree (`repo\0name` -> { number, url }), refreshed in the
-// background so every state poll doesn't fan out to `gh`. In-memory only.
+// Open PRs per worktree (`repo\0name` -> PR + push state), refreshed in
+// the background so every state poll doesn't fan out to `gh`. In-memory only.
+// NOTE: timber's ahead/behind counts against the worktree's upstream, which is
+// usually the base branch - so they measure PR scope, not push state. Push
+// state (unpushed vs origin/<branch>) is measured separately here.
+type PrEntry = {
+  number: number;
+  url: string;
+  destExists: boolean;
+  unpushed: number;
+  ff: boolean;
+};
 let prCache: {
   at: number;
-  map: Record<string, { number: number; url: string }>;
+  map: Record<string, PrEntry>;
 } | null = null;
 let prRefreshing = false;
 const PR_CACHE_TTL = 60_000;
@@ -317,6 +327,38 @@ async function fetchAllRepos(): Promise<{
   } finally {
     fetching = false;
   }
+}
+
+// Push state for one worktree, measured against origin/<branch> - the PR
+// head and push destination - never against the base-branch upstream that
+// timber's ahead/behind counts use. All reads are local and fail closed.
+async function pushInfo(
+  cwd: string,
+  name: string,
+): Promise<{ destExists: boolean; unpushed: number; ff: boolean }> {
+  const dest = `origin/${name}`;
+  const verify = await runCmd(
+    "git",
+    ["rev-parse", "--verify", "--quiet", `refs/remotes/${dest}`],
+    cwd,
+  );
+  if (verify.code !== 0) return { destExists: false, unpushed: 0, ff: false };
+  let unpushed = 0;
+  const count = await runCmd(
+    "git",
+    ["rev-list", "--count", `${dest}..HEAD`],
+    cwd,
+  );
+  if (count.code === 0) {
+    const n = parseInt(count.stdout.trim(), 10);
+    if (Number.isFinite(n) && n >= 0) unpushed = n;
+  }
+  const base = await runCmd(
+    "git",
+    ["merge-base", "--is-ancestor", dest, "HEAD"],
+    cwd,
+  );
+  return { destExists: true, unpushed, ff: base.code === 0 };
 }
 
 async function openOrCreatePr(
@@ -654,14 +696,13 @@ export default function createTimber(host: unknown, web: Web) {
       const entries = await Promise.all(
         worktrees.map(async (w) => {
           const key = `${w.repo}\0${w.name}`;
-          const result = await runCmd(
-            "gh",
-            ["pr", "view", "--json", "number,url"],
-            w.path,
-          );
-          if (result.code !== 0) return null;
+          const [viewed, push] = await Promise.all([
+            runCmd("gh", ["pr", "view", "--json", "number,url"], w.path),
+            pushInfo(w.path, w.name),
+          ]);
+          if (viewed.code !== 0) return null;
           try {
-            const parsed: unknown = JSON.parse(result.stdout);
+            const parsed: unknown = JSON.parse(viewed.stdout);
             if (
               isRecord(parsed) &&
               typeof parsed["url"] === "string" &&
@@ -669,7 +710,13 @@ export default function createTimber(host: unknown, web: Web) {
             ) {
               return [
                 key,
-                { number: parsed["number"], url: parsed["url"] },
+                {
+                  number: parsed["number"],
+                  url: parsed["url"],
+                  destExists: push.destExists,
+                  unpushed: push.unpushed,
+                  ff: push.ff,
+                },
               ] as const;
             }
           } catch {
@@ -678,7 +725,7 @@ export default function createTimber(host: unknown, web: Web) {
           return null;
         }),
       );
-      const map: Record<string, { number: number; url: string }> = {};
+      const map: Record<string, PrEntry> = {};
       for (const entry of entries) {
         if (entry) map[entry[0]] = entry[1];
       }
@@ -792,7 +839,40 @@ export default function createTimber(host: unknown, web: Web) {
       try {
         const repo = typeof body["repo"] === "string" ? body["repo"] : "";
         const name = typeof body["name"] === "string" ? body["name"] : "";
-        return await openOrCreatePr(repo, name);
+        const result = await openOrCreatePr(repo, name);
+        // Warm the PR cache so the row's upload icon can appear without
+        // waiting for the next background refresh.
+        try {
+          const listing = await readListing();
+          const found = listing.worktrees.find(
+            (w) => w.repo === repo && w.name === name,
+          );
+          if (found) {
+            const push = await pushInfo(found.path, name);
+            const key = `${repo}\0${name}`;
+            prCache = {
+              at: Date.now(),
+              map: {
+                ...(prCache?.map ?? {}),
+                [key]: {
+                  number: result.number,
+                  url: result.url,
+                  destExists: push.destExists,
+                  unpushed: push.unpushed,
+                  ff: push.ff,
+                },
+              },
+            };
+            try {
+              web.send("fetched", { at: prCache.at });
+            } catch {
+              // Tabs may be gone; the next poll picks up the listing.
+            }
+          }
+        } catch {
+          // Warming is best-effort; the background refresh covers it.
+        }
+        return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : "pr failed";
         if (message.includes("not found")) throw web.error(404, message);
@@ -815,7 +895,9 @@ export default function createTimber(host: unknown, web: Web) {
       if (found.statusError) {
         throw web.error(409, "Git status unknown; refresh and inspect first");
       }
-      // Re-verify against a fresh listing: the panel's counts may be stale.
+      // Re-verify everything fresh: the panel's counts may be stale, and
+      // timber's ahead/behind counts against the base-branch upstream, not
+      // the push destination, so push state is measured directly with git.
       const view = await runCmd(
         "gh",
         ["pr", "view", "--json", "number,url"],
@@ -824,20 +906,31 @@ export default function createTimber(host: unknown, web: Web) {
       if (view.code !== 0) {
         throw web.error(409, `No pull request is open for ${name}@${repo}`);
       }
-      if ((found.ahead ?? 0) === 0) {
-        throw web.error(409, `Nothing to push for ${name}@${repo}`);
-      }
-      if ((found.behind ?? 0) !== 0) {
+      const push = await pushInfo(found.path, name);
+      if (!push.destExists) {
         throw web.error(
           409,
-          `${name}@${repo} is behind; fetch first so the push stays a fast-forward`,
+          `No remote branch origin/${name} to push to for ${name}@${repo}`,
         );
       }
-      // Plain `git push` refuses non-fast-forward updates on its own
-      // (there is no --ff-only flag on push; that is merge/fetch): if the
-      // remote moved since the listing was read, this fails atomically
-      // instead of pushing.
-      const pushed = await runCmd("git", ["push"], found.path, 180_000);
+      if (push.unpushed === 0) {
+        throw web.error(409, `Nothing to push for ${name}@${repo}`);
+      }
+      if (!push.ff) {
+        throw web.error(
+          409,
+          `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
+        );
+      }
+      // Explicit refspec: works under any push.default, never touches the
+      // upstream config. Plain push already refuses non-fast-forwards, so a
+      // remote that moved since the check fails atomically instead of pushing.
+      const pushed = await runCmd(
+        "git",
+        ["push", "origin", `HEAD:${name}`],
+        found.path,
+        180_000,
+      );
       if (pushed.code !== 0) {
         throw new Error(
           pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,

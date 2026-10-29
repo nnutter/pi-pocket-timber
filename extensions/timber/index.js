@@ -607,16 +607,21 @@ export default function setup(pocket) {
         ${filtered.map((w) => {
           const key = `${w.repo}\0${w.name}`;
           const armed = confirmKey === key;
-          const hasPr = Boolean(
-            w.pullRequest || (prLinks[key] && prLinks[key].url),
-          );
           const cachePr = data && data.prs ? data.prs[key] : null;
-          const knownPr = hasPr || Boolean(cachePr && cachePr.url);
-          const canUpload =
-            knownPr &&
-            !w.statusError &&
-            (w.ahead ?? 0) > 0 &&
-            (w.behind ?? 0) === 0;
+          const hasPr = Boolean(
+            w.pullRequest ||
+            (prLinks[key] && prLinks[key].url) ||
+            (cachePr && cachePr.url),
+          );
+          // Push state comes from git vs origin/<branch>, NOT timber's
+          // ahead/behind: those count against the base-branch upstream.
+          const canUpload = Boolean(
+            cachePr &&
+            cachePr.destExists &&
+            cachePr.unpushed > 0 &&
+            cachePr.ff &&
+            !w.statusError,
+          );
           const kind = w.merged
             ? "merged"
             : !w.clean
@@ -746,7 +751,7 @@ export default function setup(pocket) {
                         class="button small"
                         disabled=${busy}
                         aria-disabled=${listingBusy || undefined}
-                        title=${`Push ${w.ahead ?? 0} commit${(w.ahead ?? 0) === 1 ? "" : "s"} for ${w.name}@${w.repo}`}
+                        title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
                         aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
                         onClick=${() => {
                           if (!listingBusy) doPush(w);
