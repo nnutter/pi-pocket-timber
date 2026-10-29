@@ -5,7 +5,7 @@
 export const pocketApi = 1;
 
 export default function setup(pocket) {
-  const { html, useEffect, useState, useRef, Loader, Icon } = pocket;
+  const { html, useEffect, useState, useRef, Loader, Spinner, Icon } = pocket;
 
   function badgeStyle(kind) {
     if (kind === "merged")
@@ -69,6 +69,10 @@ export default function setup(pocket) {
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
     const confirmTimer = useRef(null);
+
+    // A button's content, or a spinner in its place while its action runs.
+    const inFlight = (id, label, content) =>
+      pending === id ? html`<${Spinner} label=${label} />` : content;
 
     const doRefresh = async () => {
       setPending("refresh");
@@ -425,7 +429,7 @@ export default function setup(pocket) {
           onClick=${doRefresh}
           style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
         >
-          <${Icon} name="reload" size=${16} />
+          ${inFlight("refresh", "Refresh", html`<${Icon} name="reload" size=${16} />`)}
         </button>
         ${
           data
@@ -498,7 +502,7 @@ export default function setup(pocket) {
               type="submit"
               disabled=${busy || !source.trim()}
             >
-              Add repo
+              ${inFlight("add", "Add repo", "Add repo")}
             </button>
             <button
               type="button"
@@ -564,7 +568,7 @@ export default function setup(pocket) {
           </label>
           <div style=${{ display: "flex", gap: "6px" }}>
             <button class="button primary" type="submit" disabled=${busy}>
-              Create worktree
+              ${inFlight("create", "Create worktree", "Create worktree")}
             </button>
             <button
               type="button"
@@ -604,7 +608,7 @@ export default function setup(pocket) {
         aria-live="polite"
         style=${{ textAlign: "right" }}
       >
-        ${data ? `${filtered.length} of ${worktrees.length} worktrees` : ""}${busy ? " · Working…" : ""}
+        ${data ? `${filtered.length} of ${worktrees.length} worktrees` : ""}
       </div>
 
       ${
@@ -684,7 +688,7 @@ export default function setup(pocket) {
                 }}
                 style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px" }}
               >
-                <${Icon} name="chat" size=${16} />
+                ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
               </button>
               <span
                 class="small"
@@ -754,7 +758,7 @@ export default function setup(pocket) {
                       }}
                       style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                     >
-                      ${armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`}
+                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
                     </button>`
                   : canUpload
                     ? html`<button
@@ -768,21 +772,25 @@ export default function setup(pocket) {
                         }}
                         style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                       >
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 16 16"
-                          fill="currentColor"
-                          aria-hidden="true"
-                          style=${{ flexShrink: 0 }}
-                        >
-                          <path
-                            d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
-                          />
-                          <path
-                            d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
-                          />
-                        </svg>
+                        ${inFlight(
+                          rowAction("push", w),
+                          `Push unpushed commits for ${w.name}@${w.repo}`,
+                          html`<svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="currentColor"
+                            aria-hidden="true"
+                            style=${{ flexShrink: 0 }}
+                          >
+                            <path
+                              d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
+                            />
+                            <path
+                              d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
+                            />
+                          </svg>`,
+                        )}
                       </button>`
                     : html`<button
                         class="button small"
@@ -879,7 +887,7 @@ export default function setup(pocket) {
                 </label>
                 <div style=${{ display: "flex", gap: "6px" }}>
                   <button class="button primary" type="submit" disabled=${busy}>
-                    Create PR
+                    ${inFlight(rowAction("pr", prWorktree), `Create PR for ${prWorktree.name}@${prWorktree.repo}`, "Create PR")}
                   </button>
                   <button
                     class="button"
