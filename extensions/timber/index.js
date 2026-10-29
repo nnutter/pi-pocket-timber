@@ -258,7 +258,7 @@ export default function setup(pocket) {
       }
     };
 
-    const doPr = async (worktree, title = "", body = "") => {
+    const doPr = async (worktree, title, body, tab) => {
       setBusy(true);
       setNotice("");
       try {
@@ -273,16 +273,19 @@ export default function setup(pocket) {
           ...prev,
           [key]: { url: result.url, number: result.number },
         }));
-        if (result.warnings && result.warnings.length) {
-          setNotice(`Warning: ${result.warnings.join("; ")}`);
-        }
+        const notices = result.warnings || [];
         try {
-          window.open(result.url, "_blank", "noopener");
+          if (!tab || tab.closed) throw new Error("Tab unavailable");
+          tab.location.href = result.url;
         } catch {
-          // Blocked or unavailable: the PR link in the row still gets there.
+          notices.push(
+            "The PR tab could not open. Use the PR link in the row.",
+          );
         }
+        if (notices.length) setNotice(notices.join("; "));
         setError(null);
       } catch (failure) {
+        if (tab && !tab.closed) tab.close();
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
         setBusy(false);
@@ -833,7 +836,14 @@ export default function setup(pocket) {
                     );
                     return;
                   }
-                  void doPr(prWorktree, prTitle, prBody);
+                  let tab = null;
+                  try {
+                    tab = window.open("", "_blank");
+                    if (tab) tab.opener = null;
+                  } catch {
+                    // The PR link in the row remains available.
+                  }
+                  void doPr(prWorktree, prTitle, prBody, tab);
                 }}
                 style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
               >
