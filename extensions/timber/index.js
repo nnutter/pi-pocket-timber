@@ -7,6 +7,25 @@ export const pocketApi = 1;
 export default function setup(pocket) {
   const { html, useEffect, useState, useRef, Loader, Spinner, Icon } = pocket;
 
+  // The sort modes: the id that `sort` holds, the label, and the icon path.
+  const SORT_MODES = [
+    {
+      id: "recent",
+      label: "Activity",
+      d: "M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm7-3.25v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5a.75.75 0 0 1 1.5 0Z",
+    },
+    {
+      id: "repo",
+      label: "Repository Name",
+      d: "M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z",
+    },
+    {
+      id: "name",
+      label: "Worktree Name",
+      d: "M7.122.392a1.75 1.75 0 0 1 1.756 0l5.003 2.902c.83.481.83 1.68 0 2.162L8.878 8.358a1.75 1.75 0 0 1-1.756 0L2.119 5.456a1.251 1.251 0 0 1 0-2.162ZM8.125 1.69a.248.248 0 0 0-.25 0l-4.63 2.685 4.63 2.685a.248.248 0 0 0 .25 0l4.63-2.685ZM1.601 7.789a.75.75 0 0 1 1.025-.273l5.249 3.044a.248.248 0 0 0 .25 0l5.249-3.044a.75.75 0 0 1 .752 1.298l-5.248 3.044a1.75 1.75 0 0 1-1.756 0L1.874 8.814A.75.75 0 0 1 1.6 7.789Zm0 3.5a.75.75 0 0 1 1.025-.273l5.249 3.044a.248.248 0 0 0 .25 0l5.249-3.044a.75.75 0 0 1 .752 1.298l-5.248 3.044a1.75 1.75 0 0 1-1.756 0l-5.248-3.044a.75.75 0 0 1-.273-1.025Z",
+    },
+  ];
+
   function badgeStyle(kind) {
     if (kind === "merged")
       return {
@@ -347,6 +366,23 @@ export default function setup(pocket) {
       }
     };
 
+    const currentSort =
+      SORT_MODES.find((mode) => mode.id === sort) || SORT_MODES[0];
+    const cycleSort = () => {
+      const at = SORT_MODES.indexOf(currentSort);
+      setSort(SORT_MODES[(at + 1) % SORT_MODES.length].id);
+    };
+    const sortIcon = (mode) =>
+      html`<svg
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d=${mode.d} />
+      </svg>`;
+
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
     const filtered = worktrees
@@ -542,7 +578,7 @@ export default function setup(pocket) {
         }
 
         <div
-          style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) 110px", gap: "8px" }}
+          style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: "8px" }}
         >
           <div
             ref=${(el) => {
@@ -648,15 +684,78 @@ export default function setup(pocket) {
             placeholder="Search worktrees"
             onInput=${(e) => setSearch(e.target.value)}
           />
-          <select
-            aria-label="Sort worktrees"
-            value=${sort}
-            onChange=${(e) => setSort(e.target.value)}
+          <div
+            ref=${(el) => {
+              menuAnchors.current.sort = el;
+            }}
+            style=${{ position: "relative", display: "inline-flex", flex: "none" }}
           >
-            <option value="recent">Recent</option>
-            <option value="repo">Repository</option>
-            <option value="name">Name</option>
-          </select>
+            <div
+              style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+            >
+              <button
+                type="button"
+                class="button small"
+                title=${`Sort: ${currentSort.label}. Click to change the order.`}
+                aria-label=${`Sort: ${currentSort.label}`}
+                onClick=${cycleSort}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+              >
+                ${sortIcon(currentSort)}
+              </button>
+              <span
+                aria-hidden="true"
+                style=${{ width: "1px", background: "var(--line)" }}
+              ></span>
+              <button
+                type="button"
+                class="button small"
+                title="Choose how to sort"
+                aria-label="Choose how to sort"
+                aria-haspopup="menu"
+                aria-expanded=${openMenu === "sort"}
+                onClick=${() => setOpenMenu(openMenu === "sort" ? null : "sort")}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
+                  />
+                </svg>
+              </button>
+            </div>
+            ${
+              openMenu === "sort" &&
+              html`<div
+                role="menu"
+                style=${{ position: "absolute", top: "calc(100% + 4px)", right: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
+              >
+                ${SORT_MODES.map(
+                  (mode) =>
+                    html`<button
+                      key=${mode.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked=${mode.id === sort}
+                      style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: mode.id === sort ? "var(--line)" : "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
+                      onClick=${() => {
+                        setSort(mode.id);
+                        setOpenMenu(null);
+                      }}
+                    >
+                      ${sortIcon(mode)}
+                      <span>${mode.label}</span>
+                    </button>`,
+                )}
+              </div>`
+            }
+          </div>
         </div>
 
         ${
