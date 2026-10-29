@@ -7,6 +7,16 @@ export const pocketApi = 1;
 export default function setup(pocket) {
   const { html, useEffect, useState, useRef, Loader, Spinner, Icon } = pocket;
 
+  // Status items in a worktree row share the 24px height of the row buttons.
+  const ROW_ITEM = {
+    display: "inline-flex",
+    alignItems: "center",
+    height: "24px",
+    boxSizing: "border-box",
+    fontSize: "13px",
+    whiteSpace: "nowrap",
+  };
+
   // The sort modes: the id that `sort` holds, the label, and the icon path.
   const SORT_MODES = [
     {
@@ -838,34 +848,33 @@ export default function setup(pocket) {
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
                 <span
-                  class="small"
-                  style=${{ ...badgeStyle(kind), minWidth: "60px", textAlign: "center", justifyContent: "center" }}
+                  style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
                   >${label}</span
                 >
                 <span
-                  class="small muted mono"
-                  style=${{ minWidth: "58px", whiteSpace: "nowrap" }}
+                  class="muted mono"
+                  style=${{ ...ROW_ITEM, minWidth: "58px" }}
                   >↑${w.ahead ?? 0} ↓${w.behind ?? 0}</span
                 >
                 ${
                   w.todoTotal !== undefined &&
                   html`<span
-                    class="small muted"
+                    class="muted"
                     title=${`TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`}
-                    style=${{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: "50px" }}
+                    style=${{ ...ROW_ITEM, gap: "4px", minWidth: "50px" }}
                   >
                     <${Icon} name="check" size=${14} />
                     ${w.todoDone ?? 0}/${w.todoTotal}
                   </span>`
                 }
                 <span
-                  class="small muted"
+                  class="muted"
                   title=${
                     w.review
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: "50px" }}
+                  style=${{ ...ROW_ITEM, gap: "4px", minWidth: "50px" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
@@ -873,17 +882,17 @@ export default function setup(pocket) {
                 ${
                   prLinks[key]
                     ? html`<a
-                        class="small muted"
+                        class="muted"
                         href=${prLinks[key].url}
                         target="_blank"
                         rel="noreferrer"
-                        style=${{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        style=${{ ...ROW_ITEM, overflow: "hidden", textOverflow: "ellipsis" }}
                         >PR #${prLinks[key].number}</a
                       >`
                     : w.pullRequest &&
                       html`<span
-                        class="small muted"
-                        style=${{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        class="muted"
+                        style=${{ ...ROW_ITEM, overflow: "hidden", textOverflow: "ellipsis" }}
                         >PR ${w.pullRequest}</span
                       >`
                 }
