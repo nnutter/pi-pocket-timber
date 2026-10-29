@@ -841,7 +841,7 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doOpen(w);
                   }}
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px" }}
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", marginRight: "6px" }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
@@ -898,7 +898,7 @@ export default function setup(pocket) {
                       >`
                 }
                 <div
-                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto" }}
+                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto", paddingLeft: "8px" }}
                 >
                   <span
                     style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
