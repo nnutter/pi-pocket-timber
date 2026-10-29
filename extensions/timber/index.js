@@ -58,6 +58,9 @@ export default function setup(pocket) {
     const [alias, setAlias] = useState("");
     const [confirmKey, setConfirmKey] = useState(null);
     const [prLinks, setPrLinks] = useState({});
+    const [prWorktree, setPrWorktree] = useState(null);
+    const [prTitle, setPrTitle] = useState("");
+    const [prBody, setPrBody] = useState("");
     const confirmTimer = useRef(null);
 
     const doRefresh = async () => {
@@ -255,30 +258,34 @@ export default function setup(pocket) {
       }
     };
 
-    const doPr = async (worktree) => {
+    const doPr = async (worktree, title, body, tab) => {
       setBusy(true);
       setNotice("");
       try {
         const result = await pocket.api(
           "pr",
-          { repo: worktree.repo, name: worktree.name },
+          { repo: worktree.repo, name: worktree.name, title, body },
           { method: "POST" },
         );
+        setPrWorktree(null);
         const key = `${worktree.repo}\0${worktree.name}`;
         setPrLinks((prev) => ({
           ...prev,
           [key]: { url: result.url, number: result.number },
         }));
-        if (result.warnings && result.warnings.length) {
-          setNotice(`Warning: ${result.warnings.join("; ")}`);
-        }
+        const notices = result.warnings || [];
         try {
-          window.open(result.url, "_blank", "noopener");
+          if (!tab || tab.closed) throw new Error("Tab unavailable");
+          tab.location.href = result.url;
         } catch {
-          // Blocked or unavailable: the PR link in the row still gets there.
+          notices.push(
+            "The PR tab could not open. Use the PR link in the row.",
+          );
         }
+        if (notices.length) setNotice(notices.join("; "));
         setError(null);
       } catch (failure) {
+        if (tab && !tab.closed) tab.close();
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
         setBusy(false);
@@ -613,14 +620,10 @@ export default function setup(pocket) {
             (prLinks[key] && prLinks[key].url) ||
             (cachePr && cachePr.url),
           );
-          // Push state comes from git vs origin/<branch>, NOT timber's
-          // ahead/behind: those count against the base-branch upstream.
+          // Compare with origin/<branch> when it exists. For a new remote
+          // branch, compare with the upstream to find commits to publish.
           const canUpload = Boolean(
-            cachePr &&
-            cachePr.destExists &&
-            cachePr.unpushed > 0 &&
-            cachePr.ff &&
-            !w.statusError,
+            cachePr && cachePr.unpushed > 0 && cachePr.ff && !w.statusError,
           );
           const kind = w.merged
             ? "merged"
@@ -785,7 +788,19 @@ export default function setup(pocket) {
                         aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
                         aria-disabled=${listingBusy || undefined}
                         onClick=${() => {
-                          if (!listingBusy) doPr(w);
+                          if (listingBusy) return;
+                          if (cachePr?.url || prLinks[key]) {
+                            window.open(
+                              (cachePr?.url ? cachePr : prLinks[key]).url,
+                              "_blank",
+                              "noopener",
+                            );
+                          } else {
+                            setPrTitle("");
+                            setPrBody("");
+                            setError(null);
+                            setPrWorktree(w);
+                          }
                         }}
                         style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                       >
@@ -804,6 +819,72 @@ export default function setup(pocket) {
                       </button>`
               }
             </div>
+            ${
+              prWorktree &&
+              prWorktree.repo === w.repo &&
+              prWorktree.name === w.name &&
+              html`<form
+                onSubmit=${(event) => {
+                  event.preventDefault();
+                  if (!prTitle.trim() && prBody.trim()) {
+                    setError(
+                      "A PR subject is required when a body is provided.",
+                    );
+                    return;
+                  }
+                  let tab = null;
+                  try {
+                    tab = window.open("", "_blank");
+                    if (tab) tab.opener = null;
+                  } catch {
+                    // The PR link in the row remains available.
+                  }
+                  void doPr(prWorktree, prTitle, prBody, tab);
+                }}
+                style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
+              >
+                <strong
+                  >Create PR for ${prWorktree.name}@${prWorktree.repo}</strong
+                >
+                <span class="small muted"
+                  >Leave both fields empty to use commit information.</span
+                >
+                <label
+                  style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
+                >
+                  <span class="small">Subject</span>
+                  <input
+                    value=${prTitle}
+                    disabled=${busy}
+                    onInput=${(e) => setPrTitle(e.target.value)}
+                  />
+                </label>
+                <label
+                  style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
+                >
+                  <span class="small">Body</span>
+                  <textarea
+                    value=${prBody}
+                    disabled=${busy}
+                    rows="5"
+                    onInput=${(e) => setPrBody(e.target.value)}
+                  ></textarea>
+                </label>
+                <div style=${{ display: "flex", gap: "6px" }}>
+                  <button class="button primary" type="submit" disabled=${busy}>
+                    Create PR
+                  </button>
+                  <button
+                    class="button"
+                    type="button"
+                    disabled=${busy}
+                    onClick=${() => setPrWorktree(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>`
+            }
             ${
               w.statusError &&
               html`<p class="small muted" role="status">
