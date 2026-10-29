@@ -841,22 +841,25 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doOpen(w);
                   }}
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", marginRight: "6px" }}
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", marginRight: "10px" }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
                 <span
                   class="muted mono"
-                  title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
-                  style=${{ ...ROW_ITEM, flex: "1 1 0" }}
-                  >↑${w.ahead ?? 0}</span
+                  style=${{ ...ROW_ITEM, gap: "6px", flex: "1 1 0" }}
                 >
-                <span
-                  class="muted mono"
-                  title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
-                  style=${{ ...ROW_ITEM, flex: "1 1 0" }}
-                  >↓${w.behind ?? 0}</span
-                >
+                  <span
+                    title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
+                    style=${{ display: "inline-block", width: "4ch" }}
+                    >↑${w.ahead ?? 0}</span
+                  >
+                  <span
+                    title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
+                    style=${{ display: "inline-block", width: "4ch" }}
+                    >↓${w.behind ?? 0}</span
+                  >
+                </span>
                 ${
                   w.todoTotal !== undefined &&
                   html`<span
@@ -898,7 +901,7 @@ export default function setup(pocket) {
                       >`
                 }
                 <div
-                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto", paddingLeft: "8px" }}
+                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto", paddingLeft: "12px" }}
                 >
                   <span
                     style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
