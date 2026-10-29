@@ -826,11 +826,8 @@ export default function setup(pocket) {
                 style=${{
                   display: "flex",
                   alignItems: "center",
-                  gap: "10px",
-                  flexWrap: "nowrap",
-                  overflowX: "auto",
-                  paddingRight: "2px",
-                  scrollbarWidth: "thin",
+                  gap: "6px",
+                  flexWrap: "wrap",
                   position: "relative",
                 }}
               >
@@ -850,13 +847,13 @@ export default function setup(pocket) {
                 <span
                   class="muted mono"
                   title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
-                  style=${{ ...ROW_ITEM, minWidth: "34px" }}
+                  style=${{ ...ROW_ITEM, minWidth: "30px" }}
                   >↑${w.ahead ?? 0}</span
                 >
                 <span
                   class="muted mono"
                   title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
-                  style=${{ ...ROW_ITEM, minWidth: "34px" }}
+                  style=${{ ...ROW_ITEM, minWidth: "30px" }}
                   >↓${w.behind ?? 0}</span
                 >
                 ${
@@ -864,7 +861,7 @@ export default function setup(pocket) {
                   html`<span
                     class="muted"
                     title=${`TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`}
-                    style=${{ ...ROW_ITEM, gap: "4px", minWidth: "50px" }}
+                    style=${{ ...ROW_ITEM, gap: "4px", minWidth: "44px" }}
                   >
                     <${Icon} name="check" size=${14} />
                     ${w.todoDone ?? 0}/${w.todoTotal}
@@ -877,7 +874,7 @@ export default function setup(pocket) {
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ ...ROW_ITEM, gap: "4px", minWidth: "50px" }}
+                  style=${{ ...ROW_ITEM, gap: "4px", minWidth: "44px" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
@@ -899,46 +896,92 @@ export default function setup(pocket) {
                         >PR ${w.pullRequest}</span
                       >`
                 }
-                <span style=${{ flex: "1", minWidth: "6px" }}></span>
-                <span
-                  style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
-                  >${label}</span
+                <div
+                  style=${{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto" }}
                 >
-                ${
-                  safeToRemove(w)
-                    ? html`<button
-                        class="button small"
-                        disabled=${busy}
-                        aria-disabled=${listingBusy || undefined}
-                        title=${
-                          armed
-                            ? `Click again to delete ${w.name}@${w.repo} within 5s`
-                            : `Remove ${w.name}@${w.repo}`
-                        }
-                        aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
-                        onClick=${() => {
-                          if (!listingBusy) doRemove(w);
-                        }}
-                        style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                      >
-                        ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
-                      </button>`
-                    : canUpload
+                  <span
+                    style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
+                    >${label}</span
+                  >
+                  ${
+                    safeToRemove(w)
                       ? html`<button
                           class="button small"
                           disabled=${busy}
                           aria-disabled=${listingBusy || undefined}
-                          title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
-                          aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
+                          title=${
+                            armed
+                              ? `Click again to delete ${w.name}@${w.repo} within 5s`
+                              : `Remove ${w.name}@${w.repo}`
+                          }
+                          aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
                           onClick=${() => {
-                            if (!listingBusy) doPush(w);
+                            if (!listingBusy) doRemove(w);
                           }}
-                          style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                          style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                         >
-                          ${inFlight(
-                            rowAction("push", w),
-                            `Push unpushed commits for ${w.name}@${w.repo}`,
-                            html`<svg
+                          ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
+                        </button>`
+                      : canUpload
+                        ? html`<button
+                            class="button small"
+                            disabled=${busy}
+                            aria-disabled=${listingBusy || undefined}
+                            title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
+                            aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
+                            onClick=${() => {
+                              if (!listingBusy) doPush(w);
+                            }}
+                            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                          >
+                            ${inFlight(
+                              rowAction("push", w),
+                              `Push unpushed commits for ${w.name}@${w.repo}`,
+                              html`<svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 16 16"
+                                fill="currentColor"
+                                aria-hidden="true"
+                                style=${{ flexShrink: 0 }}
+                              >
+                                <path
+                                  d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
+                                />
+                                <path
+                                  d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
+                                />
+                              </svg>`,
+                            )}
+                          </button>`
+                        : html`<button
+                            class="button small"
+                            disabled=${busy || w.statusError}
+                            title=${
+                              w.statusError
+                                ? "Git status unknown"
+                                : `Open or create a PR for ${w.name}@${w.repo}`
+                            }
+                            aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
+                            aria-disabled=${listingBusy || undefined}
+                            onClick=${() => {
+                              if (listingBusy) return;
+                              if (cachePr?.url || prLinks[key]) {
+                                window.open(
+                                  (cachePr?.url ? cachePr : prLinks[key]).url,
+                                  "_blank",
+                                  "noopener",
+                                );
+                              } else {
+                                setPrTitle("");
+                                setPrBody("");
+                                setError(null);
+                                setPrWorktree(w);
+                              }
+                            }}
+                            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                          >
+                            <svg
                               width="16"
                               height="16"
                               viewBox="0 0 16 16"
@@ -947,55 +990,12 @@ export default function setup(pocket) {
                               style=${{ flexShrink: 0 }}
                             >
                               <path
-                                d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
+                                d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
                               />
-                              <path
-                                d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
-                              />
-                            </svg>`,
-                          )}
-                        </button>`
-                      : html`<button
-                          class="button small"
-                          disabled=${busy || w.statusError}
-                          title=${
-                            w.statusError
-                              ? "Git status unknown"
-                              : `Open or create a PR for ${w.name}@${w.repo}`
-                          }
-                          aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                          aria-disabled=${listingBusy || undefined}
-                          onClick=${() => {
-                            if (listingBusy) return;
-                            if (cachePr?.url || prLinks[key]) {
-                              window.open(
-                                (cachePr?.url ? cachePr : prLinks[key]).url,
-                                "_blank",
-                                "noopener",
-                              );
-                            } else {
-                              setPrTitle("");
-                              setPrBody("");
-                              setError(null);
-                              setPrWorktree(w);
-                            }
-                          }}
-                          style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                        >
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 16 16"
-                            fill="currentColor"
-                            aria-hidden="true"
-                            style=${{ flexShrink: 0 }}
-                          >
-                            <path
-                              d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                            />
-                          </svg>
-                        </button>`
-                }
+                            </svg>
+                          </button>`
+                  }
+                </div>
               </div>
               ${
                 prWorktree &&
