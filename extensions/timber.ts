@@ -383,7 +383,7 @@ async function openOrCreatePr(
   const viewPr = async (): Promise<{ url: string; number: number } | null> => {
     const result = await runCmd(
       "gh",
-      ["pr", "view", "--json", "number,url"],
+      ["pr", "view", "--json", "number,url,state"],
       cwd,
     );
     if (result.code !== 0) return null;
@@ -391,6 +391,7 @@ async function openOrCreatePr(
       const parsed: unknown = JSON.parse(result.stdout);
       if (
         isRecord(parsed) &&
+        parsed["state"] === "OPEN" &&
         typeof parsed["url"] === "string" &&
         typeof parsed["number"] === "number"
       ) {
@@ -697,7 +698,7 @@ export default function createTimber(host: unknown, web: Web) {
         worktrees.map(async (w) => {
           const key = `${w.repo}\0${w.name}`;
           const [viewed, push] = await Promise.all([
-            runCmd("gh", ["pr", "view", "--json", "number,url"], w.path),
+            runCmd("gh", ["pr", "view", "--json", "number,url,state"], w.path),
             pushInfo(w.path, w.name),
           ]);
           if (viewed.code !== 0) return null;
@@ -705,6 +706,7 @@ export default function createTimber(host: unknown, web: Web) {
             const parsed: unknown = JSON.parse(viewed.stdout);
             if (
               isRecord(parsed) &&
+              parsed["state"] === "OPEN" &&
               typeof parsed["url"] === "string" &&
               typeof parsed["number"] === "number"
             ) {
