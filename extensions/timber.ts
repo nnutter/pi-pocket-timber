@@ -364,6 +364,8 @@ async function pushInfo(
 async function openOrCreatePr(
   repo: string,
   name: string,
+  title: string,
+  body: string,
 ): Promise<{
   url: string;
   number: number;
@@ -417,12 +419,18 @@ async function openOrCreatePr(
     return result.code === 0 ? result.stdout.trim() : "";
   };
 
+  if (!title.trim() && body.trim()) {
+    throw new Error("A PR subject is required when a body is provided.");
+  }
+
   const warnings: string[] = [];
   const before = await upstreamOf();
   try {
     const created = await runCmd(
       "gh",
-      ["pr", "create", "--fill"],
+      title.trim() || body.trim()
+        ? ["pr", "create", "--title", title, "--body", body]
+        : ["pr", "create", "--fill"],
       cwd,
       180_000,
     );
@@ -841,7 +849,9 @@ export default function createTimber(host: unknown, web: Web) {
       try {
         const repo = typeof body["repo"] === "string" ? body["repo"] : "";
         const name = typeof body["name"] === "string" ? body["name"] : "";
-        const result = await openOrCreatePr(repo, name);
+        const title = typeof body["title"] === "string" ? body["title"] : "";
+        const prBody = typeof body["body"] === "string" ? body["body"] : "";
+        const result = await openOrCreatePr(repo, name, title, prBody);
         // Warm the PR cache so the row's upload icon can appear without
         // waiting for the next background refresh.
         try {
