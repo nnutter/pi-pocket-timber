@@ -1,0 +1,65 @@
+amends "package://github.com/jdx/hk/releases/download/v2.8.0/hk@2.8.0#/Config.pkl"
+
+import "package://github.com/jdx/hk/releases/download/v2.8.0/hk@2.8.0#/Builtins.pkl"
+
+// Prettier and mdlint are file-scoped: they only ever change the files they
+// are given, so scoped fixes are safe. The explicit fix-all hook runs the
+// same steps over every file.
+local commonSteps = new Mapping<String, Step> {
+  ["prettier"] = (Builtins.prettier) {
+    glob = List("**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.json")
+  }
+  ["mdlint"] {
+    glob = "**/*.md"
+    check = "mdlint format --check {{files}} && mdlint check --no-fix {{files}}"
+    fix = "mdlint format {{files}} && mdlint check --fix {{files}}"
+  }
+  ["gitleaks"] = Builtins.gitleaks
+  ["pkl_format"] = Builtins.pkl_format
+  ["pkl"] = (Builtins.pkl) {
+    depends = List("pkl_format")
+  }
+  ["tombi_format"] = Builtins.tombi_format
+  ["tombi"] = (Builtins.tombi) {
+    depends = List("tombi_format")
+  }
+  ["yamlfmt"] = Builtins.yamlfmt
+}
+
+steps = commonSteps
+
+hooks {
+  ["commit-msg"] {
+    fix = true
+    steps {
+      ["change-id"] {
+        fix = "timber review commit-msg {{commit_msg_file}}"
+      }
+    }
+  }
+  ["pre-commit"] {
+    fix = true
+    stage = true
+    stash = "git"
+    steps {
+      // No file filter: scan every staged change, including arbitrary types,
+      // binary files, deletions, and commits without TypeScript or Markdown changes.
+      // The git-mode scan only sees text diffs, so staged binary bytes are
+      // checked out to a temporary directory and scanned explicitly.
+      ["gitleaks"] = (Builtins.gitleaks) {
+        check =
+          "gitleaks git --redact --pre-commit --staged && tmp=$(mktemp -d) || exit $?; trap 'rm -rf \"$tmp\"' EXIT INT TERM; git diff --cached --name-only -z --diff-filter=ACMRT > \"$tmp/list\" || exit $?; git checkout-index -z --stdin --prefix=\"$tmp/tree/\" < \"$tmp/list\" || exit $?; mkdir -p \"$tmp/tree\" || exit $?; gitleaks dir --redact --verbose --no-banner \"$tmp/tree\" || exit $?"
+      }
+    }
+  }
+  ["fix-all"] {
+    fix = true
+    stage = false
+    steps = (commonSteps) {
+      ["prettier"] = (Builtins.prettier) {
+        glob = List("**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.json")
+        exclusive = true
+      }
+    }
+  }
+}

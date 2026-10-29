@@ -41,3 +41,11 @@ The files follow the gallery layout (`timber.ts` + `timber/` browser folder, no 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Tooling
+
+mise + hk, following the go-template baseline adapted for TypeScript:
+
+- `mise run check` — prettier, mdlint, gitleaks, tombi, yamlfmt (CI runs the same)
+- `mise run fix` — apply the formatters
+- `mise run setup` — install git hooks (secret scan on pre-commit, Change-Id on commit-msg)
