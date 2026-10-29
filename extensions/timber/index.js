@@ -431,59 +431,6 @@ export default function setup(pocket) {
       ${error && html`<div class="error-box">${error}</div>`}
       ${notice && html`<div class="small" role="status">${notice}</div>`}
       ${
-        prWorktree &&
-        html`<form
-          onSubmit=${(event) => {
-            event.preventDefault();
-            if (!prTitle.trim() && prBody.trim()) {
-              setError("A PR subject is required when a body is provided.");
-              return;
-            }
-            void doPr(prWorktree, prTitle, prBody);
-          }}
-          style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
-        >
-          <strong>Create PR for ${prWorktree.name}@${prWorktree.repo}</strong>
-          <span class="small muted"
-            >Leave both fields empty to use commit information.</span
-          >
-          <label
-            style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
-          >
-            <span class="small">Subject</span>
-            <input
-              value=${prTitle}
-              disabled=${busy}
-              onInput=${(e) => setPrTitle(e.target.value)}
-            />
-          </label>
-          <label
-            style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
-          >
-            <span class="small">Body</span>
-            <textarea
-              value=${prBody}
-              disabled=${busy}
-              rows="5"
-              onInput=${(e) => setPrBody(e.target.value)}
-            ></textarea>
-          </label>
-          <div style=${{ display: "flex", gap: "6px" }}>
-            <button class="button primary" type="submit" disabled=${busy}>
-              Create PR
-            </button>
-            <button
-              class="button"
-              type="button"
-              disabled=${busy}
-              onClick=${() => setPrWorktree(null)}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>`
-      }
-      ${
         data &&
         data.warnings &&
         data.warnings.length > 0 &&
@@ -873,6 +820,65 @@ export default function setup(pocket) {
                       </button>`
               }
             </div>
+            ${
+              prWorktree &&
+              prWorktree.repo === w.repo &&
+              prWorktree.name === w.name &&
+              html`<form
+                onSubmit=${(event) => {
+                  event.preventDefault();
+                  if (!prTitle.trim() && prBody.trim()) {
+                    setError(
+                      "A PR subject is required when a body is provided.",
+                    );
+                    return;
+                  }
+                  void doPr(prWorktree, prTitle, prBody);
+                }}
+                style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
+              >
+                <strong
+                  >Create PR for ${prWorktree.name}@${prWorktree.repo}</strong
+                >
+                <span class="small muted"
+                  >Leave both fields empty to use commit information.</span
+                >
+                <label
+                  style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
+                >
+                  <span class="small">Subject</span>
+                  <input
+                    value=${prTitle}
+                    disabled=${busy}
+                    onInput=${(e) => setPrTitle(e.target.value)}
+                  />
+                </label>
+                <label
+                  style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
+                >
+                  <span class="small">Body</span>
+                  <textarea
+                    value=${prBody}
+                    disabled=${busy}
+                    rows="5"
+                    onInput=${(e) => setPrBody(e.target.value)}
+                  ></textarea>
+                </label>
+                <div style=${{ display: "flex", gap: "6px" }}>
+                  <button class="button primary" type="submit" disabled=${busy}>
+                    Create PR
+                  </button>
+                  <button
+                    class="button"
+                    type="button"
+                    disabled=${busy}
+                    onClick=${() => setPrWorktree(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>`
+            }
             ${
               w.statusError &&
               html`<p class="small muted" role="status">
