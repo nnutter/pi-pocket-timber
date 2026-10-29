@@ -262,9 +262,9 @@ export default function setup(pocket) {
           ...prev,
           [key]: { url: result.url, number: result.number },
         }));
-        setNotice(
-          `${result.created ? "Created" : "Found"} PR #${result.number}.${result.warnings && result.warnings.length ? ` Warning: ${result.warnings.join("; ")}` : ""}`,
-        );
+        if (result.warnings && result.warnings.length) {
+          setNotice(`Warning: ${result.warnings.join("; ")}`);
+        }
         try {
           window.open(result.url, "_blank", "noopener");
         } catch {
