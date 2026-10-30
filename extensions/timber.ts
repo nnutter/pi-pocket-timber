@@ -329,6 +329,25 @@ async function fetchAllRepos(): Promise<{
   }
 }
 
+// The open PR in `gh pr view --json number,url,state` output, or null when
+// there is none or the output is unreadable.
+function parseOpenPr(stdout: string): { number: number; url: string } | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (
+      isRecord(parsed) &&
+      parsed["state"] === "OPEN" &&
+      typeof parsed["url"] === "string" &&
+      typeof parsed["number"] === "number"
+    ) {
+      return { number: parsed["number"], url: parsed["url"] };
+    }
+  } catch {
+    // No PR (or unreadable output): treated as none.
+  }
+  return null;
+}
+
 // Push state for one worktree, measured against origin/<branch> - the PR
 // head and push destination - never against the base-branch upstream that
 // timber's ahead/behind counts use. All reads are local and fail closed.
@@ -389,21 +408,7 @@ async function openOrCreatePr(
       ["pr", "view", "--json", "number,url,state"],
       cwd,
     );
-    if (result.code !== 0) return null;
-    try {
-      const parsed: unknown = JSON.parse(result.stdout);
-      if (
-        isRecord(parsed) &&
-        parsed["state"] === "OPEN" &&
-        typeof parsed["url"] === "string" &&
-        typeof parsed["number"] === "number"
-      ) {
-        return { url: parsed["url"], number: parsed["number"] };
-      }
-    } catch {
-      // Fall through to create.
-    }
-    return null;
+    return result.code === 0 ? parseOpenPr(result.stdout) : null;
   };
 
   const existing = await viewPr();
@@ -710,28 +715,18 @@ export default function createTimber(host: unknown, web: Web) {
             runCmd("gh", ["pr", "view", "--json", "number,url,state"], w.path),
             pushInfo(w.path, w.name),
           ]);
-          try {
-            const parsed: unknown =
-              viewed.code === 0 ? JSON.parse(viewed.stdout) : null;
-            if (
-              isRecord(parsed) &&
-              parsed["state"] === "OPEN" &&
-              typeof parsed["url"] === "string" &&
-              typeof parsed["number"] === "number"
-            ) {
-              return [
-                key,
-                {
-                  number: parsed["number"],
-                  url: parsed["url"],
-                  destExists: push.destExists,
-                  unpushed: push.unpushed,
-                  ff: push.ff,
-                },
-              ] as const;
-            }
-          } catch {
-            // No PR (or unreadable output): treated as none.
+          const pr = viewed.code === 0 ? parseOpenPr(viewed.stdout) : null;
+          if (pr) {
+            return [
+              key,
+              {
+                number: pr.number,
+                url: pr.url,
+                destExists: push.destExists,
+                unpushed: push.unpushed,
+                ff: push.ff,
+              },
+            ] as const;
           }
           return [key, push] as const;
         }),
