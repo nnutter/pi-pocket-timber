@@ -98,6 +98,8 @@ export default function setup(pocket) {
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
     const confirmTimer = useRef(null);
+    const [mergeKey, setMergeKey] = useState(null);
+    const mergeTimer = useRef(null);
     // The id of the open popover ("add"), or null. Each popover's anchor
     // element is kept in menuAnchors so an outside tap can close it.
     const [openMenu, setOpenMenu] = useState(null);
@@ -199,6 +201,7 @@ export default function setup(pocket) {
     useEffect(
       () => () => {
         if (confirmTimer.current) clearTimeout(confirmTimer.current);
+        if (mergeTimer.current) clearTimeout(mergeTimer.current);
       },
       [],
     );
@@ -207,6 +210,12 @@ export default function setup(pocket) {
       setConfirmKey(key);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
       confirmTimer.current = setTimeout(() => setConfirmKey(null), 5000);
+    };
+
+    const armMerge = (key) => {
+      setMergeKey(key);
+      if (mergeTimer.current) clearTimeout(mergeTimer.current);
+      mergeTimer.current = setTimeout(() => setMergeKey(null), 5000);
     };
 
     const doCreate = async (event) => {
@@ -378,6 +387,35 @@ export default function setup(pocket) {
         );
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Push failed");
+      } finally {
+        setPending(null);
+      }
+    };
+
+    // Merging is the one action here that cannot be undone from the panel, so
+    // it takes two clicks. The server re-checks readiness before it merges.
+    const doMerge = async (worktree) => {
+      const key = `${worktree.repo}\0${worktree.name}`;
+      if (mergeKey !== key) {
+        armMerge(key);
+        return;
+      }
+      setMergeKey(null);
+      if (mergeTimer.current) clearTimeout(mergeTimer.current);
+      setPending(rowAction("merge", worktree));
+      setNotice("");
+      try {
+        const result = await pocket.api(
+          "merge",
+          { repo: worktree.repo, name: worktree.name },
+          { method: "POST" },
+        );
+        setNotice(`Merged PR #${result.merged}.`);
+        const state = await pocket.api("state");
+        setData(state);
+        setError(null);
+      } catch (failure) {
+        setError(failure && failure.message ? failure.message : "Merge failed");
       } finally {
         setPending(null);
       }
@@ -805,6 +843,10 @@ export default function setup(pocket) {
             const behindRemote = Boolean(
               cachePr && cachePr.destExists && !cachePr.ff && !w.statusError,
             );
+            // The merge button needs an open PR. Its reason is null when ready.
+            const openPr = Boolean(cachePr && cachePr.url);
+            const mergeReason = openPr ? (cachePr.mergeBlocker ?? null) : null;
+            const mergeArmed = mergeKey === key;
             // A merged branch has nothing to publish, so it never offers a PR.
             // Uncommitted work blocks removal, so show the delete button disabled.
             const removable = safeToRemove(w);
@@ -925,6 +967,53 @@ export default function setup(pocket) {
                     style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
                     >${label}</span
                   >
+                  ${
+                    openPr &&
+                    html`<button
+                      class="button small"
+                      disabled=${busy || Boolean(mergeReason)}
+                      aria-disabled=${listingBusy || undefined}
+                      title=${
+                        mergeReason
+                          ? `Cannot merge: ${mergeReason}`
+                          : mergeArmed
+                            ? `Click again to merge PR #${cachePr.number} within 5s`
+                            : `Merge PR #${cachePr.number}`
+                      }
+                      aria-label=${
+                        mergeArmed
+                          ? `Confirm merge of PR #${cachePr.number} for ${w.name}@${w.repo}`
+                          : `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`
+                      }
+                      onClick=${() => {
+                        if (!listingBusy) doMerge(w);
+                      }}
+                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0, color: mergeArmed ? "var(--accent)" : undefined }}
+                    >
+                      ${inFlight(
+                        rowAction("merge", w),
+                        `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`,
+                        html`<svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden="true"
+                          style=${{ flexShrink: 0 }}
+                        >
+                          <path
+                            d="M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z"
+                          />
+                          <path
+                            d="M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z"
+                          />
+                          <path
+                            d="M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z"
+                          />
+                        </svg>`,
+                      )}
+                    </button>`
+                  }
                   ${
                     w.merged || removable
                       ? html`<button

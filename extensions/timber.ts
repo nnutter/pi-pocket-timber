@@ -57,6 +57,8 @@ type PrEntry = {
   destExists: boolean;
   unpushed: number;
   ff: boolean;
+  // Why the open PR cannot merge yet, or null when it can. Set only with a PR.
+  mergeBlocker?: string | null;
 };
 let prCache: {
   at: number;
@@ -329,9 +331,33 @@ async function fetchAllRepos(): Promise<{
   }
 }
 
-// The open PR in `gh pr view --json number,url,state` output, or null when
-// there is none or the output is unreadable.
-function parseOpenPr(stdout: string): { number: number; url: string } | null {
+// Fields `gh pr view` must return for parsePrView.
+const PR_VIEW_FIELDS = "number,url,state,isDraft,statusCheckRollup";
+
+type PrView = {
+  number: number;
+  url: string;
+  draft: boolean;
+  checksPassed: boolean;
+};
+
+const PASSING_CONCLUSIONS = ["SUCCESS", "NEUTRAL", "SKIPPED"];
+
+function checkPassed(check: unknown): boolean {
+  if (!isRecord(check)) return false;
+  if (check["__typename"] === "StatusContext") {
+    return check["state"] === "SUCCESS";
+  }
+  return (
+    check["status"] === "COMPLETED" &&
+    typeof check["conclusion"] === "string" &&
+    PASSING_CONCLUSIONS.includes(check["conclusion"])
+  );
+}
+
+// The open PR in `gh pr view` output, or null when there is none or the
+// output is unreadable.
+function parsePrView(stdout: string): PrView | null {
   try {
     const parsed: unknown = JSON.parse(stdout);
     if (
@@ -340,11 +366,33 @@ function parseOpenPr(stdout: string): { number: number; url: string } | null {
       typeof parsed["url"] === "string" &&
       typeof parsed["number"] === "number"
     ) {
-      return { number: parsed["number"], url: parsed["url"] };
+      const checks = parsed["statusCheckRollup"];
+      return {
+        number: parsed["number"],
+        url: parsed["url"],
+        draft: parsed["isDraft"] === true,
+        checksPassed:
+          Array.isArray(checks) &&
+          checks.length > 0 &&
+          checks.every(checkPassed),
+      };
     }
   } catch {
     // No PR (or unreadable output): treated as none.
   }
+  return null;
+}
+
+type PushInfo = { destExists: boolean; unpushed: number; ff: boolean };
+
+// Why an open PR cannot merge yet, or null when it can. The panel shows this
+// reason and the merge route enforces it.
+function mergeBlocker(pr: PrView, push: PushInfo): string | null {
+  if (pr.draft) return "PR is a draft";
+  if (!push.destExists) return "Branch is not pushed";
+  if (!push.ff) return "origin has commits this branch lacks";
+  if (push.unpushed > 0) return "Local has unpushed commits";
+  if (!pr.checksPassed) return "Checks have not all passed";
   return null;
 }
 
@@ -405,10 +453,10 @@ async function openOrCreatePr(
   const viewPr = async (): Promise<{ url: string; number: number } | null> => {
     const result = await runCmd(
       "gh",
-      ["pr", "view", "--json", "number,url,state"],
+      ["pr", "view", "--json", PR_VIEW_FIELDS],
       cwd,
     );
-    return result.code === 0 ? parseOpenPr(result.stdout) : null;
+    return result.code === 0 ? parsePrView(result.stdout) : null;
   };
 
   const existing = await viewPr();
@@ -712,10 +760,10 @@ export default function createTimber(host: unknown, web: Web) {
         worktrees.map(async (w) => {
           const key = `${w.repo}\0${w.name}`;
           const [viewed, push] = await Promise.all([
-            runCmd("gh", ["pr", "view", "--json", "number,url,state"], w.path),
+            runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
             pushInfo(w.path, w.name),
           ]);
-          const pr = viewed.code === 0 ? parseOpenPr(viewed.stdout) : null;
+          const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
           if (pr) {
             return [
               key,
@@ -725,6 +773,7 @@ export default function createTimber(host: unknown, web: Web) {
                 destExists: push.destExists,
                 unpushed: push.unpushed,
                 ff: push.ff,
+                mergeBlocker: mergeBlocker(pr, push),
               },
             ] as const;
           }
@@ -868,6 +917,10 @@ export default function createTimber(host: unknown, web: Web) {
                   destExists: push.destExists,
                   unpushed: push.unpushed,
                   ff: push.ff,
+                  mergeBlocker: mergeBlocker(
+                    { ...result, draft: false, checksPassed: false },
+                    push,
+                  ),
                 },
               },
             };
@@ -938,6 +991,71 @@ export default function createTimber(host: unknown, web: Web) {
       throw web.error(502, message);
     }
   });
+
+  // Merge the open PR once it passes mergeBlocker. Git and gh are read fresh,
+  // not from the panel's cache. --match-head-commit pins the merge to the
+  // commit that was checked, so a push after the check makes gh refuse.
+  web.route(
+    "POST",
+    "merge",
+    async ({ body }): Promise<{ merged: number; url: string }> => {
+      try {
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
+        if (found.statusError) {
+          throw web.error(409, "Git status unknown; refresh and inspect first");
+        }
+        const viewed = await runCmd(
+          "gh",
+          ["pr", "view", "--json", PR_VIEW_FIELDS],
+          found.path,
+        );
+        const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+        if (!pr) throw web.error(409, `No open PR for ${name}@${repo}`);
+        const blocker = mergeBlocker(pr, await pushInfo(found.path, name));
+        if (blocker) {
+          throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
+        }
+        const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);
+        if (head.code !== 0) {
+          throw new Error(
+            head.stderr.trim() || `git rev-parse failed (exit ${head.code})`,
+          );
+        }
+        const merged = await runCmd(
+          "gh",
+          [
+            "pr",
+            "merge",
+            String(pr.number),
+            "--merge",
+            "--match-head-commit",
+            head.stdout.trim(),
+          ],
+          found.path,
+          180_000,
+        );
+        if (merged.code !== 0) {
+          throw new Error(
+            merged.stderr.trim() || `gh pr merge failed (exit ${merged.code})`,
+          );
+        }
+        prCache = null;
+        return { merged: pr.number, url: pr.url };
+      } catch (error) {
+        if (error instanceof Error && "status" in error) throw error;
+        const message = error instanceof Error ? error.message : "merge failed";
+        throw web.error(502, message);
+      }
+    },
+  );
 
   web.route(
     "POST",
