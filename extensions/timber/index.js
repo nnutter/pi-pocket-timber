@@ -706,20 +706,6 @@ export default function setup(pocket) {
               <button
                 type="button"
                 class="button small"
-                title=${`Sort: ${currentSort.label}. Click to change the order.`}
-                aria-label=${`Sort: ${currentSort.label}`}
-                onClick=${cycleSort}
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
-              >
-                ${sortIcon(currentSort)}
-              </button>
-              <span
-                aria-hidden="true"
-                style=${{ width: "1px", background: "var(--line)" }}
-              ></span>
-              <button
-                type="button"
-                class="button small"
                 title="Choose how to sort"
                 aria-label="Choose how to sort"
                 aria-haspopup="menu"
@@ -738,6 +724,20 @@ export default function setup(pocket) {
                     d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
                   />
                 </svg>
+              </button>
+              <span
+                aria-hidden="true"
+                style=${{ width: "1px", background: "var(--line)" }}
+              ></span>
+              <button
+                type="button"
+                class="button small"
+                title=${`Sort: ${currentSort.label}. Click to change the order.`}
+                aria-label=${`Sort: ${currentSort.label}`}
+                onClick=${cycleSort}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+              >
+                ${sortIcon(currentSort)}
               </button>
             </div>
             ${
