@@ -968,7 +968,10 @@ export default function setup(pocket) {
                     >${label}</span
                   >
                   ${
+                    // Push is the only useful action while commits are
+                    // unpushed: merge stays blocked until they are published.
                     openPr &&
+                    !canUpload &&
                     html`<button
                       class="button small"
                       disabled=${busy || Boolean(mergeReason)}
@@ -1067,59 +1070,64 @@ export default function setup(pocket) {
                               </svg>`,
                             )}
                           </button>`
-                        : behindRemote
-                          ? html`<button
-                              class="button small"
-                              disabled
-                              title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
-                              aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                            >
-                              <${Icon}
-                                path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
-                                size=${16}
-                              />
-                            </button>`
-                          : html`<button
-                              class="button small"
-                              disabled=${busy || w.statusError}
-                              title=${
-                                w.statusError
-                                  ? "Git status unknown"
-                                  : `Open or create a PR for ${w.name}@${w.repo}`
-                              }
-                              aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                              aria-disabled=${listingBusy || undefined}
-                              onClick=${() => {
-                                if (listingBusy) return;
-                                if (cachePr?.url || prLinks[key]) {
-                                  window.open(
-                                    (cachePr?.url ? cachePr : prLinks[key]).url,
-                                    "_blank",
-                                    "noopener",
-                                  );
-                                } else {
-                                  setPrTitle("");
-                                  setPrBody("");
-                                  setError(null);
-                                  setPrWorktree(w);
-                                }
-                              }}
-                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                            >
-                              <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 16 16"
-                                fill="currentColor"
-                                aria-hidden="true"
-                                style=${{ flexShrink: 0 }}
+                        : openPr
+                          ? // The merge button and the PR number link cover
+                            // this row, so no PR action belongs here.
+                            null
+                          : behindRemote
+                            ? html`<button
+                                class="button small"
+                                disabled
+                                title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
+                                aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
+                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
                               >
-                                <path
-                                  d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                                <${Icon}
+                                  path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
+                                  size=${16}
                                 />
-                              </svg>
-                            </button>`
+                              </button>`
+                            : html`<button
+                                class="button small"
+                                disabled=${busy || w.statusError}
+                                title=${
+                                  w.statusError
+                                    ? "Git status unknown"
+                                    : `Open or create a PR for ${w.name}@${w.repo}`
+                                }
+                                aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
+                                aria-disabled=${listingBusy || undefined}
+                                onClick=${() => {
+                                  if (listingBusy) return;
+                                  if (cachePr?.url || prLinks[key]) {
+                                    window.open(
+                                      (cachePr?.url ? cachePr : prLinks[key])
+                                        .url,
+                                      "_blank",
+                                      "noopener",
+                                    );
+                                  } else {
+                                    setPrTitle("");
+                                    setPrBody("");
+                                    setError(null);
+                                    setPrWorktree(w);
+                                  }
+                                }}
+                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                              >
+                                <svg
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 16 16"
+                                  fill="currentColor"
+                                  aria-hidden="true"
+                                  style=${{ flexShrink: 0 }}
+                                >
+                                  <path
+                                    d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                                  />
+                                </svg>
+                              </button>`
                   }
                 </div>
               </div>
