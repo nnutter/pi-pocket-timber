@@ -511,6 +511,90 @@ async function pushInfo(
   return { destExists, unpushed, ff: base.code === 0 };
 }
 
+// `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
+// URL names no repository on GitHub.
+function repoFromRemoteUrl(url: string): string | null {
+  const text = url.trim().replace(/\.git$/, "");
+  const scp = /^[^@/]+@[^:/]+:(.+)$/.exec(text);
+  const path = scp ? scp[1] : /^(?:[a-z+]+:\/\/)?[^/]+\/(.+)$/i.exec(text)?.[1];
+  if (!path) return null;
+  const parts = path.split("/").filter((part) => part !== "");
+  if (parts.length < 2) return null;
+  const [owner, repo] = parts.slice(-2);
+  if (!owner || !repo) return null;
+  return `${owner}/${repo}`;
+}
+
+// The branch checked out in a worktree. `gh pr view --repo` needs one, since
+// with --repo it cannot infer the pull request from the folder alone.
+async function currentBranch(cwd: string): Promise<string> {
+  const result = await runCmd(
+    "git",
+    ["rev-parse", "--abbrev-ref", "HEAD"],
+    cwd,
+  );
+  const name = result.stdout.trim();
+  if (result.code !== 0 || name === "" || name === "HEAD") {
+    throw new Error(`No branch is checked out in ${cwd}.`);
+  }
+  return name;
+}
+
+// The pull request `gh pr create` prints, as a URL.
+function prFromCreateOutput(
+  stdout: string,
+): { url: string; number: number } | null {
+  const found = /https:\/\/[^\s]+\/pull\/(\d+)/.exec(stdout);
+  if (!found) return null;
+  return { url: found[0], number: Number(found[1]) };
+}
+
+// Where a pull request for this worktree goes: the repository of its upstream's
+// remote, and the upstream branch. gh otherwise picks the base branch, and for
+// a fork it can pick the fork's source instead of the remote this branch tracks.
+async function prTarget(
+  cwd: string,
+  name: string,
+): Promise<{ repo: string; base: string; remote: string }> {
+  const up = await runCmd(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    cwd,
+  );
+  let remote = "";
+  let base = "";
+  if (up.code === 0 && up.stdout.trim().includes("/")) {
+    const upstream = up.stdout.trim();
+    remote = upstream.slice(0, upstream.indexOf("/"));
+    base = upstream.slice(upstream.indexOf("/") + 1);
+  } else {
+    // No upstream yet: use the remote head of `origin`, when git knows it.
+    const head = await runCmd(
+      "git",
+      ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      cwd,
+    );
+    if (head.code !== 0 || !head.stdout.trim().startsWith("origin/")) {
+      throw new Error(
+        `No upstream for ${name}, so the pull request's repository and base branch are unknown. Set one with: git branch --set-upstream-to=origin/<branch>`,
+      );
+    }
+    remote = "origin";
+    base = head.stdout.trim().slice("origin/".length);
+  }
+  const url = await runCmd("git", ["remote", "get-url", remote], cwd);
+  if (url.code !== 0) {
+    throw new Error(`No remote named ${remote} in ${cwd}.`);
+  }
+  const repo = repoFromRemoteUrl(url.stdout);
+  if (!repo) {
+    throw new Error(
+      `The ${remote} remote is not a GitHub repository: ${url.stdout.trim()}`,
+    );
+  }
+  return { repo, base, remote };
+}
+
 async function openOrCreatePr(
   repo: string,
   name: string,
@@ -532,16 +616,22 @@ async function openOrCreatePr(
   if (!found) throw new Error(`Worktree not found: ${name}@${repo}`);
   const cwd = found.path;
 
-  const viewPr = async (): Promise<{ url: string; number: number } | null> => {
+  const target = await prTarget(cwd, name);
+
+  const branch = await currentBranch(cwd);
+
+  const viewPr = async (
+    which: string,
+  ): Promise<{ url: string; number: number } | null> => {
     const result = await runCmd(
       "gh",
-      ["pr", "view", "--json", PR_VIEW_FIELDS],
+      ["pr", "view", which, "--repo", target.repo, "--json", PR_VIEW_FIELDS],
       cwd,
     );
     return result.code === 0 ? parsePrView(result.stdout) : null;
   };
 
-  const existing = await viewPr();
+  const existing = await viewPr(branch);
   if (existing) return { ...existing, created: false, warnings: [] };
 
   // `gh pr create` switches the branch upstream to the new PR branch.
@@ -561,12 +651,21 @@ async function openOrCreatePr(
 
   const warnings: string[] = [];
   const before = await upstreamOf();
+  let createdPr: { url: string; number: number } | null = null;
   try {
     const created = await runCmd(
       "gh",
-      title.trim() || body.trim()
-        ? ["pr", "create", "--title", title, "--body", body]
-        : ["pr", "create", "--fill"],
+      [
+        "pr",
+        "create",
+        "--repo",
+        target.repo,
+        "--base",
+        target.base,
+        ...(title.trim() || body.trim()
+          ? ["--title", title, "--body", body]
+          : ["--fill"]),
+      ],
       cwd,
       180_000,
     );
@@ -575,6 +674,7 @@ async function openOrCreatePr(
         created.stderr.trim() || `gh pr create failed (exit ${created.code})`,
       );
     }
+    createdPr = prFromCreateOutput(created.stdout);
   } finally {
     try {
       const after = await upstreamOf();
@@ -602,7 +702,11 @@ async function openOrCreatePr(
     }
   }
 
-  const opened = await viewPr();
+  // `gh pr create` sets the branch's upstream to the pull request's branch, and
+  // the upstream is put back above, so look the new PR up by what gh printed,
+  // then by the branch.
+  const opened =
+    (createdPr && (await viewPr(createdPr.url))) || (await viewPr(branch));
   if (!opened) {
     throw new Error(
       "PR create reported success but no PR is visible; refresh and inspect before retrying.",
@@ -1067,9 +1171,19 @@ export default function createTimber(host: unknown, web: Web) {
         if (found.statusError) {
           throw web.error(409, "Git status unknown; refresh and inspect first");
         }
+        const target = await prTarget(found.path, name);
+        const branch = await currentBranch(found.path);
         const viewed = await runCmd(
           "gh",
-          ["pr", "view", "--json", PR_VIEW_FIELDS],
+          [
+            "pr",
+            "view",
+            branch,
+            "--repo",
+            target.repo,
+            "--json",
+            PR_VIEW_FIELDS,
+          ],
           found.path,
         );
         const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
@@ -1090,6 +1204,8 @@ export default function createTimber(host: unknown, web: Web) {
             "pr",
             "merge",
             String(pr.number),
+            "--repo",
+            target.repo,
             "--merge",
             "--match-head-commit",
             head.stdout.trim(),
