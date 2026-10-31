@@ -243,6 +243,15 @@ export default function setup(pocket) {
         const state = await pocket.api("state");
         setData(state);
         setError(null);
+        // A new worktree is for working in, so open its session now. A failure
+        // here leaves the worktree made; the row's open button still works.
+        try {
+          await startSession(result.worktree);
+        } catch (failure) {
+          setNotice(
+            `Created ${result.worktree.name}@${result.worktree.repo}, but its session did not open: ${failure && failure.message ? failure.message : "unknown error"}`,
+          );
+        }
       } catch (failure) {
         setError(
           failure && failure.message ? failure.message : "Create failed",
@@ -310,29 +319,44 @@ export default function setup(pocket) {
       }
     };
 
-    const doOpen = async (worktree) => {
-      const source = pocket.conversationId();
-      if (source === null || source === undefined) {
-        setError("Open a session first — panels need one to start from.");
-        return;
+    // Start a plain session in a worktree's folder and show it. The app's own
+    // endpoint creates it without a link to this session: a linked session
+    // would make this one the root of an Agent Teams team, and the person is
+    // opening a worktree to work in, not to orchestrate. The title is the
+    // Timber name, so a row of sessions says which worktree each one is in.
+    const startSession = async (worktree) => {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "X-Pocket": "1", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cwd: worktree.path,
+          title: `${worktree.name}@${worktree.repo}`,
+        }),
+      });
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        // A plain-text error from the server: reported below.
       }
-      const key =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (!response.ok) {
+        throw new Error(
+          (payload && payload.error) || text.slice(0, 200) || "Session failed",
+        );
+      }
+      const target = payload && payload.id;
+      if (typeof target !== "number") {
+        throw new Error("The session did not open.");
+      }
+      pocket.openConversation(target);
+    };
+
+    const doOpen = async (worktree) => {
       setPending(rowAction("open", worktree));
       setNotice("");
       try {
-        const result = await pocket.api(
-          `open/${source}`,
-          { repo: worktree.repo, name: worktree.name, key },
-          { method: "POST" },
-        );
-        const target = result && (result.session ?? result.conversationId);
-        if (target === undefined || target === null) {
-          throw new Error("Open did not return a session.");
-        }
-        pocket.openConversation(target);
+        await startSession(worktree);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Open failed");
       } finally {

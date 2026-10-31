@@ -804,33 +804,6 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
-  const effectiveModel = (request: {
-    conversation?: { model?: unknown };
-    body?: Record<string, unknown>;
-  }): string | undefined => {
-    const allowed = allowedModels();
-    const asked =
-      request.body && typeof request.body["model"] === "string"
-        ? (request.body["model"] as string).trim()
-        : "";
-    if (asked) return asked;
-    if (allowed.length === 0) return undefined;
-    const src = request.conversation?.model as
-      | string
-      | { provider?: unknown; modelId?: unknown; id?: unknown }
-      | undefined;
-    let srcSpec: string | undefined;
-    if (typeof src === "string") srcSpec = src;
-    else if (src && typeof src.provider === "string") {
-      if (typeof src.modelId === "string")
-        srcSpec = `${src.provider}/${src.modelId}`;
-      else if (typeof src.id === "string")
-        srcSpec = `${src.provider}/${src.id}`;
-    }
-    if (srcSpec && allowed.includes(srcSpec)) return undefined;
-    return allowed[0];
-  };
-
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time.
@@ -1215,57 +1188,6 @@ export default function createTimber(host: unknown, web: Web) {
           throw web.error(502, "pi did not return a title and body.");
         }
         return draft;
-      },
-      { conversation: "source", access: "steer" },
-    );
-  }
-
-  // Open a session in a worktree's folder. Browser can't create sessions,
-  // so the panel (session-bound) calls this conversation-bound route,
-  // which starts a linked session with cwd set to the worktree path.
-  if (typeof web.conversationRoute === "function") {
-    web.conversationRoute(
-      "POST",
-      "open/:source",
-      async (request) => {
-        try {
-          const repo =
-            typeof request.body["repo"] === "string"
-              ? request.body["repo"]
-              : "";
-          const name =
-            typeof request.body["name"] === "string"
-              ? request.body["name"]
-              : "";
-          const key =
-            typeof request.body["key"] === "string" ? request.body["key"] : "";
-          if (!key.trim())
-            throw web.error(400, "Missing open key; reload the panel.");
-          checkRepoName(repo);
-          checkBranchName(name, "worktree name");
-          const listing = await readListing();
-          const found = listing.worktrees.find(
-            (w) => w.repo === repo && w.name === name,
-          );
-          if (!found)
-            throw web.error(404, `Worktree not found: ${name}@${repo}`);
-          const model = effectiveModel(request);
-          const started = await request.linkedSessions.start(
-            {
-              title: `${name}@${repo}`,
-              message: `Working in worktree ${name}@${repo} at ${found.path}.`,
-              cwd: found.path,
-              ...(model ? { model } : {}),
-            },
-            `x.timber.open:${key.trim()}`,
-          );
-          return started;
-        } catch (error) {
-          if (error instanceof Error && "status" in error) throw error;
-          const message =
-            error instanceof Error ? error.message : "open failed";
-          throw web.error(502, message);
-        }
       },
       { conversation: "source", access: "steer" },
     );
