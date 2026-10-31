@@ -1341,7 +1341,7 @@ export default function setup(pocket) {
   if (typeof pocket.panel === "function") {
     pocket.panel({
       id: "timber",
-      title: "Timber worktrees",
+      title: "Worktrees",
       iconPath:
         "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
       component: TimberPage,
@@ -1363,7 +1363,7 @@ export default function setup(pocket) {
   } else {
     pocket.page({
       id: "timber",
-      title: "Timber worktrees",
+      title: "Worktrees",
       component: TimberPage,
     });
     pocket.rail({
