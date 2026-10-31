@@ -20,11 +20,24 @@ Manual:
 cp -r extensions/* ~/.pi-pocket/extensions/
 ```
 
-Then Menu → Extensions → turn on **timber**.
+Then Menu → Extensions → turn on **Timber**.
 The files follow the gallery layout (`timber.ts` + `timber/` browser folder, no `node_modules`), so publishing is Menu → Extensions → **Share…** on the installed drop-in.
+
+## The Extensions sheet
 
 `docs/gallery-entry.json` is the entry for the gallery index: its files with their hashes, and what the module installs.
 Its `source.commit` must name a pushed commit that holds these files.
+
+Pi Pocket reads no entry from a repository.
+It reads the provenance of an installed drop-in, the sidecar `timber.gallery.json` beside the module, and a sidecar gives the sheet's title and version:
+
+```sh
+mise run sidecar
+```
+
+The row then reads **Timber**, and its second line says that it came from another index, `nnutter/pi-pocket-timber`, because the default index does not list it.
+Installing from an index that lists it shows the author there instead.
+Write the sidecar again after the files change: it records their hashes.
 
 ## What it adds
 
