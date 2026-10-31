@@ -23,6 +23,9 @@ cp -r extensions/* ~/.pi-pocket/extensions/
 Then Menu → Extensions → turn on **timber**.
 The files follow the gallery layout (`timber.ts` + `timber/` browser folder, no `node_modules`), so publishing is Menu → Extensions → **Share…** on the installed drop-in.
 
+`docs/gallery-entry.json` is the entry for the gallery index: its files with their hashes, and what the module installs.
+Its `source.commit` must name a pushed commit that holds these files.
+
 ## What it adds
 
 - **Timber worktrees panel** (rail + launcher): search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts

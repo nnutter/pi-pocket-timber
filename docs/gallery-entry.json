@@ -1,0 +1,58 @@
+{
+  "name": "timber",
+  "title": "Timber",
+  "description": "Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a side panel.",
+  "tags": ["git", "worktree", "pull-request", "review"],
+  "author": {
+    "name": "Nathan Nutter",
+    "github": "nnutter"
+  },
+  "version": "1.0.0",
+  "source": {
+    "repo": "nnutter/pi-pocket-timber",
+    "commit": "cf1538e65fe9dab53135dfa4ab03affe936f7755",
+    "path": "extensions"
+  },
+  "files": [
+    {
+      "name": "timber.ts",
+      "sha256": "ca72dbe6caa9ec20c176e0fe45f4e69c5111c86e62b8014a133dbc857a70f110",
+      "size": 40691
+    },
+    {
+      "name": "timber/index.js",
+      "sha256": "58b2995d3f3326059078ab61fe7d1c2432e678c623b0bd8e5d8503f36c4832ae",
+      "size": 56771
+    }
+  ],
+  "pocketApi": 2,
+  "minPocket": "0.19.0",
+  "declares": {
+    "extensions": ["timber"],
+    "tools": [
+      "timber_list",
+      "timber_create",
+      "timber_remove",
+      "timber_repo_add",
+      "timber_fetch"
+    ],
+    "readOnlyTools": [],
+    "hooks": [],
+    "sections": [],
+    "wraps": [],
+    "routes": [
+      "GET state",
+      "POST fetch",
+      "POST create",
+      "POST repositories",
+      "POST pr",
+      "POST push",
+      "POST merge",
+      "POST remove",
+      "POST pr-draft/:source"
+    ],
+    "client": "owner",
+    "access": "steer"
+  },
+  "revoked": []
+}
