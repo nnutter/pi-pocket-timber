@@ -10,19 +10,19 @@
   "version": "1.0.0",
   "source": {
     "repo": "nnutter/pi-pocket-timber",
-    "commit": "90b19c3bd1756564511ca779039dbc4dc4251ef8",
+    "commit": "c65bd15d5faa52f34ce559c383722e5bd5e04f5a",
     "path": "extensions"
   },
   "files": [
     {
       "name": "timber.ts",
-      "sha256": "8d5fee61ad611d69715c958cc934c859df4f877089d6f324e8da281150eaec0b",
-      "size": 43228
+      "sha256": "ae2f4d2a10b7d385f1819f2f9dc1ed265f31c6f7c0d3791d0fcea2d1e2a5ef70",
+      "size": 44608
     },
     {
       "name": "timber/index.js",
-      "sha256": "58b2995d3f3326059078ab61fe7d1c2432e678c623b0bd8e5d8503f36c4832ae",
-      "size": 56771
+      "sha256": "4c3a839ceb4599cb2603ad5ef26cf40b7ec55da67f235a13a9e0e434d7d5efdb",
+      "size": 56409
     }
   ],
   "pocketApi": 2,
