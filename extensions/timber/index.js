@@ -97,6 +97,8 @@ export default function setup(pocket) {
     const [prWorktree, setPrWorktree] = useState(null);
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
+    const [drafting, setDrafting] = useState(false);
+    const draftRun = useRef(0);
     const confirmTimer = useRef(null);
     const [mergeKey, setMergeKey] = useState(null);
     const mergeTimer = useRef(null);
@@ -202,6 +204,7 @@ export default function setup(pocket) {
       () => () => {
         if (confirmTimer.current) clearTimeout(confirmTimer.current);
         if (mergeTimer.current) clearTimeout(mergeTimer.current);
+        draftRun.current += 1;
       },
       [],
     );
@@ -368,6 +371,42 @@ export default function setup(pocket) {
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
         setPending(null);
+      }
+    };
+
+    // One request: the server runs the `pi` CLI in the worktree and answers
+    // with a draft. The wait can be minutes, so the form shows a spinner and
+    // leaves manual entry available.
+    const doDraft = async (worktree) => {
+      const source = pocket.conversationId();
+      if (source == null) {
+        setError("Open a session to generate a PR draft.");
+        return;
+      }
+      const run = ++draftRun.current;
+      const active = () =>
+        run === draftRun.current && pocket.conversationId() === source;
+      setDrafting(true);
+      setError(null);
+      try {
+        const draft = await pocket.api(
+          `pr-draft/${source}`,
+          { repo: worktree.repo, name: worktree.name },
+          { method: "POST" },
+        );
+        if (!active()) return;
+        setPrTitle(draft.title);
+        setPrBody(draft.body);
+      } catch (failure) {
+        if (active()) {
+          setError(
+            failure && failure.message
+              ? failure.message
+              : "Draft generation failed",
+          );
+        }
+      } finally {
+        if (run === draftRun.current) setDrafting(false);
       }
     };
 
@@ -1107,6 +1146,8 @@ export default function setup(pocket) {
                                       "noopener",
                                     );
                                   } else {
+                                    draftRun.current += 1;
+                                    setDrafting(false);
                                     setPrTitle("");
                                     setPrBody("");
                                     setError(null);
@@ -1138,6 +1179,7 @@ export default function setup(pocket) {
                 html`<form
                   onSubmit=${(event) => {
                     event.preventDefault();
+                    if (busy || drafting) return;
                     if (!prTitle.trim() && prBody.trim()) {
                       setError(
                         "A PR subject is required when a body is provided.",
@@ -1159,7 +1201,8 @@ export default function setup(pocket) {
                     >Create PR for ${prWorktree.name}@${prWorktree.repo}</strong
                   >
                   <span class="small muted"
-                    >Leave both fields empty to use commit information.</span
+                    >Leave both fields empty to use commit information. A draft
+                    session continues if you cancel.</span
                   >
                   <label
                     style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
@@ -1167,7 +1210,7 @@ export default function setup(pocket) {
                     <span class="small">Subject</span>
                     <input
                       value=${prTitle}
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                       onInput=${(e) => setPrTitle(e.target.value)}
                     />
                   </label>
@@ -1177,16 +1220,27 @@ export default function setup(pocket) {
                     <span class="small">Body</span>
                     <textarea
                       value=${prBody}
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                       rows="5"
                       onInput=${(e) => setPrBody(e.target.value)}
                     ></textarea>
                   </label>
-                  <div style=${{ display: "flex", gap: "6px" }}>
+                  <div
+                    style=${{ display: "flex", gap: "6px", flexWrap: "wrap" }}
+                  >
+                    <button
+                      class="button"
+                      type="button"
+                      disabled=${busy || drafting || Boolean(prTitle.trim() || prBody.trim())}
+                      title=${prTitle.trim() || prBody.trim() ? "Clear the subject and body to generate a draft" : "Generate a draft using the conversation model"}
+                      onClick=${() => doDraft(prWorktree)}
+                    >
+                      ${drafting ? html`<${Spinner} label="Generating PR draft" />` : "Generate draft"}
+                    </button>
                     <button
                       class="button primary"
                       type="submit"
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                     >
                       ${inFlight(rowAction("pr", prWorktree), `Create PR for ${prWorktree.name}@${prWorktree.repo}`, "Create PR")}
                     </button>
@@ -1194,7 +1248,11 @@ export default function setup(pocket) {
                       class="button"
                       type="button"
                       disabled=${busy}
-                      onClick=${() => setPrWorktree(null)}
+                      onClick=${() => {
+                        draftRun.current += 1;
+                        setDrafting(false);
+                        setPrWorktree(null);
+                      }}
                     >
                       Cancel
                     </button>

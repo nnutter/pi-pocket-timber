@@ -2,7 +2,7 @@
  * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a side panel.
  * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, and open-or-create PR per worktree.
  */
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -329,6 +329,88 @@ async function fetchAllRepos(): Promise<{
   } finally {
     fetching = false;
   }
+}
+
+// `pi --print` reads its prompt from stdin when stdin is not a terminal, so it
+// must not inherit a pipe that nobody closes: it would wait until the timeout.
+function runPi(
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    const child = spawn("pi", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const cap = 2 * 1024 * 1024;
+    const keep = (text: string) =>
+      text.length > cap ? text.slice(-cap) : text;
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout = keep(stdout + String(chunk));
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr = keep(stderr + String(chunk));
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr: error.message, code: 127 });
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      resolve({
+        stdout,
+        stderr: signal
+          ? `${stderr}${stderr ? " " : ""}stopped by ${signal}`
+          : stderr,
+        code: code ?? 1,
+      });
+    });
+  });
+}
+
+// A draft can take minutes: the CLI reads the repository and writes prose.
+const PR_DRAFT_TIMEOUT = 5 * 60_000;
+
+// Purpose-focused guidance, as the audit-commits skill gives it, with the
+// output shape that the form needs back.
+const PR_DRAFT_PROMPT = [
+  "Draft a pull request title and body for the committed changes of this worktree.",
+  "Read the repository, the commits against the base branch, and their diff.",
+  "Ignore uncommitted changes.",
+  "Explain why the change is needed and what it makes possible for the people who use the project, not a list of internal edits. Use plain words, with no unexplained acronyms.",
+  "Keep the title on one line of at most 72 characters. Keep the body brief and factual: a short summary, then whatever the reader needs to review or try it. Do not invent tests, results, or links.",
+  "If the change cannot be described from the repository, say so instead of guessing.",
+  "Do not modify files, commit, push, or create or edit a pull request.",
+  'Reply with one JSON object and nothing else: {"title": string, "body": string}. The body is Markdown.',
+].join("\n");
+
+// The CLI may wrap its answer in prose or a code fence. Take the first JSON
+// object that has both fields, and nothing else.
+function parseDraft(stdout: string): { title: string; body: string } | null {
+  const start = stdout.indexOf("{");
+  const end = stdout.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(stdout.slice(start, end + 1));
+    if (
+      isRecord(parsed) &&
+      typeof parsed["title"] === "string" &&
+      typeof parsed["body"] === "string" &&
+      parsed["title"].trim() !== "" &&
+      parsed["body"].trim() !== ""
+    ) {
+      return { title: parsed["title"].trim(), body: parsed["body"].trim() };
+    }
+  } catch {
+    // Not JSON: report no draft.
+  }
+  return null;
 }
 
 // Fields `gh pr view` must return for parsePrView.
@@ -1081,6 +1163,62 @@ export default function createTimber(host: unknown, web: Web) {
       }
     },
   );
+
+  // Draft a PR title and body with the `pi` CLI, in the worktree's folder.
+  // The CLI reads the repository itself, so the draft follows the code and the
+  // commit messages without shipping them to the panel. It runs with the model
+  // and thinking level of the conversation that asked, when Pi has them.
+  if (typeof web.conversationRoute === "function") {
+    web.conversationRoute(
+      "POST",
+      "pr-draft/:source",
+      async (request) => {
+        const { body } = request;
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
+        try {
+          checkRepoName(repo);
+          checkBranchName(name, "worktree name");
+        } catch {
+          throw web.error(400, "Invalid repository or worktree name.");
+        }
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!found) throw web.error(404, "Worktree not found.");
+        if (found.statusError) throw web.error(409, "Git status is unknown.");
+        const model = request.conversation.model;
+        const modelArg =
+          model && typeof model.provider === "string"
+            ? `${model.provider}/${String(model.modelId)}`
+            : "";
+        const thinking = request.conversation.thinkingLevel;
+        const args = [
+          "-p",
+          "--no-session",
+          "--mode",
+          "text",
+          ...(modelArg ? ["--model", modelArg] : []),
+          ...(thinking ? ["--thinking", String(thinking)] : []),
+          PR_DRAFT_PROMPT,
+        ];
+        const run = await runPi(args, found.path, PR_DRAFT_TIMEOUT);
+        if (run.code !== 0) {
+          throw web.error(
+            502,
+            run.stderr.trim().slice(-400) || `pi exited ${String(run.code)}`,
+          );
+        }
+        const draft = parseDraft(run.stdout);
+        if (!draft) {
+          throw web.error(502, "pi did not return a title and body.");
+        }
+        return draft;
+      },
+      { conversation: "source", access: "steer" },
+    );
+  }
 
   // Open a session in a worktree's folder. Browser can't create sessions,
   // so the panel (session-bound) calls this conversation-bound route,
