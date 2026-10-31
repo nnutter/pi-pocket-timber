@@ -14,6 +14,22 @@ gitleaks = "latest"
 description = "Run fix and check"
 run = [{ task = "fix" }, { task = "check" }]
 
+[tasks.sidecar]
+description = "Write timber.gallery.json beside the installed drop-in, so Menu > Extensions shows its title"
+run = '''
+python3 - <<'EOF'
+import json, os, time
+repo = os.path.dirname(os.path.abspath("mise.toml"))
+entry = json.load(open(os.path.join(repo, "docs/gallery-entry.json")))
+sidecar = {"format": 1, "index": "nnutter/pi-pocket-timber", "installedAt": int(time.time() * 1000), "entry": entry}
+target = os.path.expanduser("~/.pi-pocket/extensions/timber.gallery.json")
+with open(target, "w") as f:
+    json.dump(sidecar, f, indent=4)
+    f.write("\n")
+print("wrote", target)
+EOF
+'''
+
 [tasks.setup]
 description = "Install hk git hooks"
 run = "hk install --mise"

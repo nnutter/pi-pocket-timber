@@ -97,7 +97,11 @@ export default function setup(pocket) {
     const [prWorktree, setPrWorktree] = useState(null);
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
+    const [drafting, setDrafting] = useState(false);
+    const draftRun = useRef(0);
     const confirmTimer = useRef(null);
+    const [mergeKey, setMergeKey] = useState(null);
+    const mergeTimer = useRef(null);
     // The id of the open popover ("add"), or null. Each popover's anchor
     // element is kept in menuAnchors so an outside tap can close it.
     const [openMenu, setOpenMenu] = useState(null);
@@ -123,8 +127,15 @@ export default function setup(pocket) {
     }, [openMenu]);
 
     // A button's content, or a spinner in its place while its action runs.
+    // The spinner is 0.85em, so 19px makes it 16px, the size of the icons, and
+    // the fixed box keeps the button from shifting while it spins.
     const inFlight = (id, label, content) =>
-      pending === id ? html`<${Spinner} label=${label} />` : content;
+      pending === id
+        ? html`<span
+            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", width: "16px", height: "16px", fontSize: "19px" }}
+            ><${Spinner} label=${label}
+          /></span>`
+        : content;
 
     const doRefresh = async () => {
       setPending("refresh");
@@ -192,6 +203,8 @@ export default function setup(pocket) {
     useEffect(
       () => () => {
         if (confirmTimer.current) clearTimeout(confirmTimer.current);
+        if (mergeTimer.current) clearTimeout(mergeTimer.current);
+        draftRun.current += 1;
       },
       [],
     );
@@ -200,6 +213,12 @@ export default function setup(pocket) {
       setConfirmKey(key);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
       confirmTimer.current = setTimeout(() => setConfirmKey(null), 5000);
+    };
+
+    const armMerge = (key) => {
+      setMergeKey(key);
+      if (mergeTimer.current) clearTimeout(mergeTimer.current);
+      mergeTimer.current = setTimeout(() => setMergeKey(null), 5000);
     };
 
     const doCreate = async (event) => {
@@ -224,6 +243,15 @@ export default function setup(pocket) {
         const state = await pocket.api("state");
         setData(state);
         setError(null);
+        // A new worktree is for working in, so open its session now. A failure
+        // here leaves the worktree made; the row's open button still works.
+        try {
+          await startSession(result.worktree);
+        } catch (failure) {
+          setNotice(
+            `Created ${result.worktree.name}@${result.worktree.repo}, but its session did not open: ${failure && failure.message ? failure.message : "unknown error"}`,
+          );
+        }
       } catch (failure) {
         setError(
           failure && failure.message ? failure.message : "Create failed",
@@ -291,29 +319,44 @@ export default function setup(pocket) {
       }
     };
 
-    const doOpen = async (worktree) => {
-      const source = pocket.conversationId();
-      if (source === null || source === undefined) {
-        setError("Open a session first — panels need one to start from.");
-        return;
+    // Start a plain session in a worktree's folder and show it. The app's own
+    // endpoint creates it without a link to this session: a linked session
+    // would make this one the root of an Agent Teams team, and the person is
+    // opening a worktree to work in, not to orchestrate. The title is the
+    // Timber name, so a row of sessions says which worktree each one is in.
+    const startSession = async (worktree) => {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "X-Pocket": "1", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cwd: worktree.path,
+          title: `${worktree.name}@${worktree.repo}`,
+        }),
+      });
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        // A plain-text error from the server: reported below.
       }
-      const key =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (!response.ok) {
+        throw new Error(
+          (payload && payload.error) || text.slice(0, 200) || "Session failed",
+        );
+      }
+      const target = payload && payload.id;
+      if (typeof target !== "number") {
+        throw new Error("The session did not open.");
+      }
+      pocket.openConversation(target);
+    };
+
+    const doOpen = async (worktree) => {
       setPending(rowAction("open", worktree));
       setNotice("");
       try {
-        const result = await pocket.api(
-          `open/${source}`,
-          { repo: worktree.repo, name: worktree.name, key },
-          { method: "POST" },
-        );
-        const target = result && (result.session ?? result.conversationId);
-        if (target === undefined || target === null) {
-          throw new Error("Open did not return a session.");
-        }
-        pocket.openConversation(target);
+        await startSession(worktree);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Open failed");
       } finally {
@@ -355,6 +398,42 @@ export default function setup(pocket) {
       }
     };
 
+    // One request: the server runs the `pi` CLI in the worktree and answers
+    // with a draft. The wait can be minutes, so the form shows a spinner and
+    // leaves manual entry available.
+    const doDraft = async (worktree) => {
+      const source = pocket.conversationId();
+      if (source == null) {
+        setError("Open a session to generate a PR draft.");
+        return;
+      }
+      const run = ++draftRun.current;
+      const active = () =>
+        run === draftRun.current && pocket.conversationId() === source;
+      setDrafting(true);
+      setError(null);
+      try {
+        const draft = await pocket.api(
+          `pr-draft/${source}`,
+          { repo: worktree.repo, name: worktree.name },
+          { method: "POST" },
+        );
+        if (!active()) return;
+        setPrTitle(draft.title);
+        setPrBody(draft.body);
+      } catch (failure) {
+        if (active()) {
+          setError(
+            failure && failure.message
+              ? failure.message
+              : "Draft generation failed",
+          );
+        }
+      } finally {
+        if (run === draftRun.current) setDrafting(false);
+      }
+    };
+
     const doPush = async (worktree) => {
       setPending(rowAction("push", worktree));
       setNotice("");
@@ -371,6 +450,35 @@ export default function setup(pocket) {
         );
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Push failed");
+      } finally {
+        setPending(null);
+      }
+    };
+
+    // Merging is the one action here that cannot be undone from the panel, so
+    // it takes two clicks. The server re-checks readiness before it merges.
+    const doMerge = async (worktree) => {
+      const key = `${worktree.repo}\0${worktree.name}`;
+      if (mergeKey !== key) {
+        armMerge(key);
+        return;
+      }
+      setMergeKey(null);
+      if (mergeTimer.current) clearTimeout(mergeTimer.current);
+      setPending(rowAction("merge", worktree));
+      setNotice("");
+      try {
+        const result = await pocket.api(
+          "merge",
+          { repo: worktree.repo, name: worktree.name },
+          { method: "POST" },
+        );
+        setNotice(`Merged PR #${result.merged}.`);
+        const state = await pocket.api("state");
+        setData(state);
+        setError(null);
+      } catch (failure) {
+        setError(failure && failure.message ? failure.message : "Merge failed");
       } finally {
         setPending(null);
       }
@@ -444,6 +552,186 @@ export default function setup(pocket) {
         fontSize: "13px",
       }}
     >
+      <div
+        style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: "8px" }}
+      >
+        <div
+          ref=${(el) => {
+            menuAnchors.current.add = el;
+          }}
+          style=${{ position: "relative", display: "inline-flex", flex: "none" }}
+        >
+          <div
+            style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+          >
+            <button
+              type="button"
+              class="button small"
+              disabled=${busy || !data || data.repositories.length === 0}
+              title="New worktree"
+              aria-label="New worktree"
+              onClick=${() => {
+                setOpenMenu(null);
+                setCreating((v) => !v);
+              }}
+              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+                style=${{ flexShrink: 0 }}
+              >
+                <path
+                  d="M7.122.392a1.75 1.75 0 0 1 1.756 0l5.003 2.902c.83.481.83 1.68 0 2.162L8.878 8.358a1.75 1.75 0 0 1-1.756 0L2.119 5.456a1.25 1.25 0 0 1 0-2.162ZM8.125 1.69a.25.25 0 0 0-.25 0L3.244 4.375 7.875 7.06a.25.25 0 0 0 .25 0l4.63-2.685ZM1.602 7.789a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296L1.874 8.813a.75.75 0 0 1-.272-1.024m0 3.5a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296l-5.248-3.044a.75.75 0 0 1-.272-1.024M11.75 15.25v-2h-2a.75.75 0 0 1 0-1.5h2v-2a.75.75 0 0 1 1.5 0v2h2a.75.75 0 0 1 0 1.5h-2v2a.75.75 0 0 1-1.5 0"
+                />
+              </svg>
+            </button>
+            <span
+              aria-hidden="true"
+              style=${{ width: "1px", background: "var(--line)" }}
+            ></span>
+            <button
+              type="button"
+              class="button small"
+              disabled=${busy}
+              title="More ways to add"
+              aria-label="More ways to add"
+              aria-haspopup="menu"
+              aria-expanded=${openMenu === "add"}
+              onClick=${() => setOpenMenu(openMenu === "add" ? null : "add")}
+              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
+                />
+              </svg>
+            </button>
+          </div>
+          ${
+            openMenu === "add" &&
+            html`<div
+              role="menu"
+              style=${{ position: "absolute", top: "calc(100% + 4px)", left: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
+                onClick=${() => {
+                  setOpenMenu(null);
+                  setAdding(true);
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  style=${{ flexShrink: 0 }}
+                >
+                  <path
+                    d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .75.75V6a.75.75 0 0 1-1.5 0V1.5h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 3.5 9h3a.75.75 0 0 1 0 1.5h-3a1 1 0 0 0 0 2h3a.75.75 0 0 1 0 1.5h-3A2.5 2.5 0 0 1 1 11.5v-9Z"
+                  />
+                  <path
+                    d="M12.21 13.479a.75.75 0 1 0 1.061 1.061l2.504-2.505a.75.75 0 0 0 0-1.061L13.271 8.47a.75.75 0 0 0-1.061 1.06l1.224 1.225H8.75a.75.75 0 1 0 0 1.5h4.685l-1.225 1.224Z"
+                  />
+                </svg>
+                <span>Import repo</span>
+              </button>
+            </div>`
+          }
+        </div>
+        <input
+          type="search"
+          aria-label="Find worktrees"
+          value=${search}
+          placeholder="Search worktrees"
+          onInput=${(e) => setSearch(e.target.value)}
+        />
+        <div
+          ref=${(el) => {
+            menuAnchors.current.sort = el;
+          }}
+          style=${{ position: "relative", display: "inline-flex", flex: "none" }}
+        >
+          <div
+            style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+          >
+            <button
+              type="button"
+              class="button small"
+              title="Choose how to sort"
+              aria-label="Choose how to sort"
+              aria-haspopup="menu"
+              aria-expanded=${openMenu === "sort"}
+              onClick=${() => setOpenMenu(openMenu === "sort" ? null : "sort")}
+              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
+                />
+              </svg>
+            </button>
+            <span
+              aria-hidden="true"
+              style=${{ width: "1px", background: "var(--line)" }}
+            ></span>
+            <button
+              type="button"
+              class="button small"
+              title=${`Sort: ${currentSort.label}. Click to change the order.`}
+              aria-label=${`Sort: ${currentSort.label}`}
+              onClick=${cycleSort}
+              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+            >
+              ${sortIcon(currentSort)}
+            </button>
+          </div>
+          ${
+            openMenu === "sort" &&
+            html`<div
+              role="menu"
+              style=${{ position: "absolute", top: "calc(100% + 4px)", right: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
+            >
+              ${SORT_MODES.map(
+                (mode) =>
+                  html`<button
+                    key=${mode.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked=${mode.id === sort}
+                    style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: mode.id === sort ? "var(--line)" : "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
+                    onClick=${() => {
+                      setSort(mode.id);
+                      setOpenMenu(null);
+                    }}
+                  >
+                    ${sortIcon(mode)}
+                    <span>${mode.label}</span>
+                  </button>`,
+              )}
+            </div>`
+          }
+        </div>
+      </div>
       <div
         style=${{ flex: "1", minHeight: "0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" }}
       >
@@ -586,188 +874,6 @@ export default function setup(pocket) {
             </div>
           </form>`
         }
-
-        <div
-          style=${{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: "8px" }}
-        >
-          <div
-            ref=${(el) => {
-              menuAnchors.current.add = el;
-            }}
-            style=${{ position: "relative", display: "inline-flex", flex: "none" }}
-          >
-            <div
-              style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
-            >
-              <button
-                type="button"
-                class="button small"
-                disabled=${busy || !data || data.repositories.length === 0}
-                title="New worktree"
-                aria-label="New worktree"
-                onClick=${() => {
-                  setOpenMenu(null);
-                  setCreating((v) => !v);
-                }}
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                  style=${{ flexShrink: 0 }}
-                >
-                  <path
-                    d="M7.122.392a1.75 1.75 0 0 1 1.756 0l5.003 2.902c.83.481.83 1.68 0 2.162L8.878 8.358a1.75 1.75 0 0 1-1.756 0L2.119 5.456a1.25 1.25 0 0 1 0-2.162ZM8.125 1.69a.25.25 0 0 0-.25 0L3.244 4.375 7.875 7.06a.25.25 0 0 0 .25 0l4.63-2.685ZM1.602 7.789a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296L1.874 8.813a.75.75 0 0 1-.272-1.024m0 3.5a.75.75 0 0 1 1.024-.272l5.249 3.044a.749.749 0 1 1-.753 1.296l-5.248-3.044a.75.75 0 0 1-.272-1.024M11.75 15.25v-2h-2a.75.75 0 0 1 0-1.5h2v-2a.75.75 0 0 1 1.5 0v2h2a.75.75 0 0 1 0 1.5h-2v2a.75.75 0 0 1-1.5 0"
-                  />
-                </svg>
-              </button>
-              <span
-                aria-hidden="true"
-                style=${{ width: "1px", background: "var(--line)" }}
-              ></span>
-              <button
-                type="button"
-                class="button small"
-                disabled=${busy}
-                title="More ways to add"
-                aria-label="More ways to add"
-                aria-haspopup="menu"
-                aria-expanded=${openMenu === "add"}
-                onClick=${() => setOpenMenu(openMenu === "add" ? null : "add")}
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
-                  />
-                </svg>
-              </button>
-            </div>
-            ${
-              openMenu === "add" &&
-              html`<div
-                role="menu"
-                style=${{ position: "absolute", top: "calc(100% + 4px)", left: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
-                  onClick=${() => {
-                    setOpenMenu(null);
-                    setAdding(true);
-                  }}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="currentColor"
-                    aria-hidden="true"
-                    style=${{ flexShrink: 0 }}
-                  >
-                    <path
-                      d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .75.75V6a.75.75 0 0 1-1.5 0V1.5h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 3.5 9h3a.75.75 0 0 1 0 1.5h-3a1 1 0 0 0 0 2h3a.75.75 0 0 1 0 1.5h-3A2.5 2.5 0 0 1 1 11.5v-9Z"
-                    />
-                    <path
-                      d="M12.21 13.479a.75.75 0 1 0 1.061 1.061l2.504-2.505a.75.75 0 0 0 0-1.061L13.271 8.47a.75.75 0 0 0-1.061 1.06l1.224 1.225H8.75a.75.75 0 1 0 0 1.5h4.685l-1.225 1.224Z"
-                    />
-                  </svg>
-                  <span>Import repo</span>
-                </button>
-              </div>`
-            }
-          </div>
-          <input
-            type="search"
-            aria-label="Find worktrees"
-            value=${search}
-            placeholder="Search worktrees"
-            onInput=${(e) => setSearch(e.target.value)}
-          />
-          <div
-            ref=${(el) => {
-              menuAnchors.current.sort = el;
-            }}
-            style=${{ position: "relative", display: "inline-flex", flex: "none" }}
-          >
-            <div
-              style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
-            >
-              <button
-                type="button"
-                class="button small"
-                title=${`Sort: ${currentSort.label}. Click to change the order.`}
-                aria-label=${`Sort: ${currentSort.label}`}
-                onClick=${cycleSort}
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
-              >
-                ${sortIcon(currentSort)}
-              </button>
-              <span
-                aria-hidden="true"
-                style=${{ width: "1px", background: "var(--line)" }}
-              ></span>
-              <button
-                type="button"
-                class="button small"
-                title="Choose how to sort"
-                aria-label="Choose how to sort"
-                aria-haspopup="menu"
-                aria-expanded=${openMenu === "sort"}
-                onClick=${() => setOpenMenu(openMenu === "sort" ? null : "sort")}
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"
-                  />
-                </svg>
-              </button>
-            </div>
-            ${
-              openMenu === "sort" &&
-              html`<div
-                role="menu"
-                style=${{ position: "absolute", top: "calc(100% + 4px)", right: "0", zIndex: "5", minWidth: "170px", padding: "4px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
-              >
-                ${SORT_MODES.map(
-                  (mode) =>
-                    html`<button
-                      key=${mode.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked=${mode.id === sort}
-                      style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: mode.id === sort ? "var(--line)" : "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
-                      onClick=${() => {
-                        setSort(mode.id);
-                        setOpenMenu(null);
-                      }}
-                    >
-                      ${sortIcon(mode)}
-                      <span>${mode.label}</span>
-                    </button>`,
-                )}
-              </div>`
-            }
-          </div>
-        </div>
-
         ${
           data &&
           filtered.length === 0 &&
@@ -793,6 +899,21 @@ export default function setup(pocket) {
             const canUpload = Boolean(
               cachePr && cachePr.unpushed > 0 && cachePr.ff && !w.statusError,
             );
+            // origin/<branch> has commits this branch lacks, so a PR would
+            // publish the wrong history. Block it until the branch is synced.
+            const behindRemote = Boolean(
+              cachePr && cachePr.destExists && !cachePr.ff && !w.statusError,
+            );
+            // The merge button needs an open PR. Its reason is null when ready.
+            const openPr = Boolean(cachePr && cachePr.url);
+            const mergeReason = openPr ? (cachePr.mergeBlocker ?? null) : null;
+            const mergeArmed = mergeKey === key;
+            // A merged branch has nothing to publish, so it never offers a PR.
+            // Uncommitted work blocks removal, so show the delete button disabled.
+            const removable = safeToRemove(w);
+            const removeBlocked = w.statusError
+              ? "Git status unknown"
+              : "Merged, but has uncommitted changes. Commit or discard them to remove.";
             const kind = w.merged
               ? "merged"
               : !w.clean
@@ -908,15 +1029,67 @@ export default function setup(pocket) {
                     >${label}</span
                   >
                   ${
-                    safeToRemove(w)
+                    // Push is the only useful action while commits are
+                    // unpushed: merge stays blocked until they are published.
+                    openPr &&
+                    !canUpload &&
+                    html`<button
+                      class="button small"
+                      disabled=${busy || Boolean(mergeReason)}
+                      aria-disabled=${listingBusy || undefined}
+                      title=${
+                        mergeReason
+                          ? `Cannot merge: ${mergeReason}`
+                          : mergeArmed
+                            ? `Click again to merge PR #${cachePr.number} within 5s`
+                            : `Merge PR #${cachePr.number}`
+                      }
+                      aria-label=${
+                        mergeArmed
+                          ? `Confirm merge of PR #${cachePr.number} for ${w.name}@${w.repo}`
+                          : `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`
+                      }
+                      onClick=${() => {
+                        if (!listingBusy) doMerge(w);
+                      }}
+                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0, color: mergeArmed ? "var(--accent)" : undefined }}
+                    >
+                      ${inFlight(
+                        rowAction("merge", w),
+                        `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`,
+                        html`<svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden="true"
+                          style=${{ flexShrink: 0 }}
+                        >
+                          <path
+                            d="M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z"
+                          />
+                          <path
+                            d="M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z"
+                          />
+                          <path
+                            d="M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z"
+                          />
+                        </svg>`,
+                      )}
+                    </button>`
+                  }
+                  ${
+                    w.merged || removable
                       ? html`<button
                           class="button small"
-                          disabled=${busy}
+                          disabled=${busy || !removable}
                           aria-disabled=${listingBusy || undefined}
                           title=${
-                            armed
-                              ? `Click again to delete ${w.name}@${w.repo} within 5s`
-                              : `Remove ${w.name}@${w.repo}`
+                            !removable
+                              ? removeBlocked
+                              : armed
+                                ? `Click again to delete ${w.name}@${w.repo} within 5s`
+                                : `Remove ${w.name}@${w.repo}`
                           }
                           aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
                           onClick=${() => {
@@ -958,46 +1131,66 @@ export default function setup(pocket) {
                               </svg>`,
                             )}
                           </button>`
-                        : html`<button
-                            class="button small"
-                            disabled=${busy || w.statusError}
-                            title=${
-                              w.statusError
-                                ? "Git status unknown"
-                                : `Open or create a PR for ${w.name}@${w.repo}`
-                            }
-                            aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                            aria-disabled=${listingBusy || undefined}
-                            onClick=${() => {
-                              if (listingBusy) return;
-                              if (cachePr?.url || prLinks[key]) {
-                                window.open(
-                                  (cachePr?.url ? cachePr : prLinks[key]).url,
-                                  "_blank",
-                                  "noopener",
-                                );
-                              } else {
-                                setPrTitle("");
-                                setPrBody("");
-                                setError(null);
-                                setPrWorktree(w);
-                              }
-                            }}
-                            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                          >
-                            <svg
-                              width="16"
-                              height="16"
-                              viewBox="0 0 16 16"
-                              fill="currentColor"
-                              aria-hidden="true"
-                              style=${{ flexShrink: 0 }}
-                            >
-                              <path
-                                d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                              />
-                            </svg>
-                          </button>`
+                        : openPr
+                          ? // The merge button and the PR number link cover
+                            // this row, so no PR action belongs here.
+                            null
+                          : behindRemote
+                            ? html`<button
+                                class="button small"
+                                disabled
+                                title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
+                                aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
+                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                              >
+                                <${Icon}
+                                  path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
+                                  size=${16}
+                                />
+                              </button>`
+                            : html`<button
+                                class="button small"
+                                disabled=${busy || w.statusError}
+                                title=${
+                                  w.statusError
+                                    ? "Git status unknown"
+                                    : `Open or create a PR for ${w.name}@${w.repo}`
+                                }
+                                aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
+                                aria-disabled=${listingBusy || undefined}
+                                onClick=${() => {
+                                  if (listingBusy) return;
+                                  if (cachePr?.url || prLinks[key]) {
+                                    window.open(
+                                      (cachePr?.url ? cachePr : prLinks[key])
+                                        .url,
+                                      "_blank",
+                                      "noopener",
+                                    );
+                                  } else {
+                                    draftRun.current += 1;
+                                    setDrafting(false);
+                                    setPrTitle("");
+                                    setPrBody("");
+                                    setError(null);
+                                    setPrWorktree(w);
+                                  }
+                                }}
+                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                              >
+                                <svg
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 16 16"
+                                  fill="currentColor"
+                                  aria-hidden="true"
+                                  style=${{ flexShrink: 0 }}
+                                >
+                                  <path
+                                    d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                                  />
+                                </svg>
+                              </button>`
                   }
                 </div>
               </div>
@@ -1008,6 +1201,7 @@ export default function setup(pocket) {
                 html`<form
                   onSubmit=${(event) => {
                     event.preventDefault();
+                    if (busy || drafting) return;
                     if (!prTitle.trim() && prBody.trim()) {
                       setError(
                         "A PR subject is required when a body is provided.",
@@ -1029,7 +1223,8 @@ export default function setup(pocket) {
                     >Create PR for ${prWorktree.name}@${prWorktree.repo}</strong
                   >
                   <span class="small muted"
-                    >Leave both fields empty to use commit information.</span
+                    >Leave both fields empty to use commit information. A draft
+                    session continues if you cancel.</span
                   >
                   <label
                     style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
@@ -1037,7 +1232,7 @@ export default function setup(pocket) {
                     <span class="small">Subject</span>
                     <input
                       value=${prTitle}
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                       onInput=${(e) => setPrTitle(e.target.value)}
                     />
                   </label>
@@ -1047,16 +1242,27 @@ export default function setup(pocket) {
                     <span class="small">Body</span>
                     <textarea
                       value=${prBody}
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                       rows="5"
                       onInput=${(e) => setPrBody(e.target.value)}
                     ></textarea>
                   </label>
-                  <div style=${{ display: "flex", gap: "6px" }}>
+                  <div
+                    style=${{ display: "flex", gap: "6px", flexWrap: "wrap" }}
+                  >
+                    <button
+                      class="button"
+                      type="button"
+                      disabled=${busy || drafting || Boolean(prTitle.trim() || prBody.trim())}
+                      title=${prTitle.trim() || prBody.trim() ? "Clear the subject and body to generate a draft" : "Generate a draft using the conversation model"}
+                      onClick=${() => doDraft(prWorktree)}
+                    >
+                      ${drafting ? html`<${Spinner} label="Generating PR draft" />` : "Generate draft"}
+                    </button>
                     <button
                       class="button primary"
                       type="submit"
-                      disabled=${busy}
+                      disabled=${busy || drafting}
                     >
                       ${inFlight(rowAction("pr", prWorktree), `Create PR for ${prWorktree.name}@${prWorktree.repo}`, "Create PR")}
                     </button>
@@ -1064,7 +1270,11 @@ export default function setup(pocket) {
                       class="button"
                       type="button"
                       disabled=${busy}
-                      onClick=${() => setPrWorktree(null)}
+                      onClick=${() => {
+                        draftRun.current += 1;
+                        setDrafting(false);
+                        setPrWorktree(null);
+                      }}
                     >
                       Cancel
                     </button>
@@ -1129,7 +1339,7 @@ export default function setup(pocket) {
   if (typeof pocket.panel === "function") {
     pocket.panel({
       id: "timber",
-      title: "Timber worktrees",
+      title: "Worktrees",
       iconPath:
         "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
       component: TimberPage,
@@ -1151,7 +1361,7 @@ export default function setup(pocket) {
   } else {
     pocket.page({
       id: "timber",
-      title: "Timber worktrees",
+      title: "Worktrees",
       component: TimberPage,
     });
     pocket.rail({

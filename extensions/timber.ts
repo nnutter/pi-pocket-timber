@@ -2,7 +2,7 @@
  * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a side panel.
  * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, and open-or-create PR per worktree.
  */
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -57,6 +57,8 @@ type PrEntry = {
   destExists: boolean;
   unpushed: number;
   ff: boolean;
+  // Why the open PR cannot merge yet, or null when it can. Set only with a PR.
+  mergeBlocker?: string | null;
 };
 let prCache: {
   at: number;
@@ -329,6 +331,153 @@ async function fetchAllRepos(): Promise<{
   }
 }
 
+// `pi --print` reads its prompt from stdin when stdin is not a terminal, so it
+// must not inherit a pipe that nobody closes: it would wait until the timeout.
+function runPi(
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    const child = spawn("pi", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const cap = 2 * 1024 * 1024;
+    const keep = (text: string) =>
+      text.length > cap ? text.slice(-cap) : text;
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout = keep(stdout + String(chunk));
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr = keep(stderr + String(chunk));
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr: error.message, code: 127 });
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      resolve({
+        stdout,
+        stderr: signal
+          ? `${stderr}${stderr ? " " : ""}stopped by ${signal}`
+          : stderr,
+        code: code ?? 1,
+      });
+    });
+  });
+}
+
+// A draft can take minutes: the CLI reads the repository and writes prose.
+const PR_DRAFT_TIMEOUT = 5 * 60_000;
+
+// Purpose-focused guidance, as the audit-commits skill gives it, with the
+// output shape that the form needs back.
+const PR_DRAFT_PROMPT = [
+  "Draft a pull request title and body for the committed changes of this worktree.",
+  "Read the repository, the commits against the base branch, and their diff.",
+  "Ignore uncommitted changes.",
+  "Explain why the change is needed and what it makes possible for the people who use the project, not a list of internal edits. Use plain words, with no unexplained acronyms.",
+  "Keep the title on one line of at most 72 characters. Keep the body brief and factual: a short summary, then whatever the reader needs to review or try it. Do not invent tests, results, or links.",
+  "If the change cannot be described from the repository, say so instead of guessing.",
+  "Do not modify files, commit, push, or create or edit a pull request.",
+  'Reply with one JSON object and nothing else: {"title": string, "body": string}. The body is Markdown.',
+].join("\n");
+
+// The CLI may wrap its answer in prose or a code fence. Take the first JSON
+// object that has both fields, and nothing else.
+function parseDraft(stdout: string): { title: string; body: string } | null {
+  const start = stdout.indexOf("{");
+  const end = stdout.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(stdout.slice(start, end + 1));
+    if (
+      isRecord(parsed) &&
+      typeof parsed["title"] === "string" &&
+      typeof parsed["body"] === "string" &&
+      parsed["title"].trim() !== "" &&
+      parsed["body"].trim() !== ""
+    ) {
+      return { title: parsed["title"].trim(), body: parsed["body"].trim() };
+    }
+  } catch {
+    // Not JSON: report no draft.
+  }
+  return null;
+}
+
+// Fields `gh pr view` must return for parsePrView.
+const PR_VIEW_FIELDS = "number,url,state,isDraft,statusCheckRollup";
+
+type PrView = {
+  number: number;
+  url: string;
+  draft: boolean;
+  checksPassed: boolean;
+};
+
+const PASSING_CONCLUSIONS = ["SUCCESS", "NEUTRAL", "SKIPPED"];
+
+function checkPassed(check: unknown): boolean {
+  if (!isRecord(check)) return false;
+  if (check["__typename"] === "StatusContext") {
+    return check["state"] === "SUCCESS";
+  }
+  return (
+    check["status"] === "COMPLETED" &&
+    typeof check["conclusion"] === "string" &&
+    PASSING_CONCLUSIONS.includes(check["conclusion"])
+  );
+}
+
+// The open PR in `gh pr view` output, or null when there is none or the
+// output is unreadable.
+function parsePrView(stdout: string): PrView | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (
+      isRecord(parsed) &&
+      parsed["state"] === "OPEN" &&
+      typeof parsed["url"] === "string" &&
+      typeof parsed["number"] === "number"
+    ) {
+      const checks = parsed["statusCheckRollup"];
+      return {
+        number: parsed["number"],
+        url: parsed["url"],
+        draft: parsed["isDraft"] === true,
+        checksPassed:
+          Array.isArray(checks) &&
+          checks.length > 0 &&
+          checks.every(checkPassed),
+      };
+    }
+  } catch {
+    // No PR (or unreadable output): treated as none.
+  }
+  return null;
+}
+
+type PushInfo = { destExists: boolean; unpushed: number; ff: boolean };
+
+// Why an open PR cannot merge yet, or null when it can. The panel shows this
+// reason and the merge route enforces it.
+function mergeBlocker(pr: PrView, push: PushInfo): string | null {
+  if (pr.draft) return "PR is a draft";
+  if (!push.destExists) return "Branch is not pushed";
+  if (!push.ff) return "origin has commits this branch lacks";
+  if (push.unpushed > 0) return "Local has unpushed commits";
+  if (!pr.checksPassed) return "Checks have not all passed";
+  return null;
+}
+
 // Push state for one worktree, measured against origin/<branch> - the PR
 // head and push destination - never against the base-branch upstream that
 // timber's ahead/behind counts use. All reads are local and fail closed.
@@ -362,6 +511,90 @@ async function pushInfo(
   return { destExists, unpushed, ff: base.code === 0 };
 }
 
+// `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
+// URL names no repository on GitHub.
+function repoFromRemoteUrl(url: string): string | null {
+  const text = url.trim().replace(/\.git$/, "");
+  const scp = /^[^@/]+@[^:/]+:(.+)$/.exec(text);
+  const path = scp ? scp[1] : /^(?:[a-z+]+:\/\/)?[^/]+\/(.+)$/i.exec(text)?.[1];
+  if (!path) return null;
+  const parts = path.split("/").filter((part) => part !== "");
+  if (parts.length < 2) return null;
+  const [owner, repo] = parts.slice(-2);
+  if (!owner || !repo) return null;
+  return `${owner}/${repo}`;
+}
+
+// The branch checked out in a worktree. `gh pr view --repo` needs one, since
+// with --repo it cannot infer the pull request from the folder alone.
+async function currentBranch(cwd: string): Promise<string> {
+  const result = await runCmd(
+    "git",
+    ["rev-parse", "--abbrev-ref", "HEAD"],
+    cwd,
+  );
+  const name = result.stdout.trim();
+  if (result.code !== 0 || name === "" || name === "HEAD") {
+    throw new Error(`No branch is checked out in ${cwd}.`);
+  }
+  return name;
+}
+
+// The pull request `gh pr create` prints, as a URL.
+function prFromCreateOutput(
+  stdout: string,
+): { url: string; number: number } | null {
+  const found = /https:\/\/[^\s]+\/pull\/(\d+)/.exec(stdout);
+  if (!found) return null;
+  return { url: found[0], number: Number(found[1]) };
+}
+
+// Where a pull request for this worktree goes: the repository of its upstream's
+// remote, and the upstream branch. gh otherwise picks the base branch, and for
+// a fork it can pick the fork's source instead of the remote this branch tracks.
+async function prTarget(
+  cwd: string,
+  name: string,
+): Promise<{ repo: string; base: string; remote: string }> {
+  const up = await runCmd(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    cwd,
+  );
+  let remote = "";
+  let base = "";
+  if (up.code === 0 && up.stdout.trim().includes("/")) {
+    const upstream = up.stdout.trim();
+    remote = upstream.slice(0, upstream.indexOf("/"));
+    base = upstream.slice(upstream.indexOf("/") + 1);
+  } else {
+    // No upstream yet: use the remote head of `origin`, when git knows it.
+    const head = await runCmd(
+      "git",
+      ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      cwd,
+    );
+    if (head.code !== 0 || !head.stdout.trim().startsWith("origin/")) {
+      throw new Error(
+        `No upstream for ${name}, so the pull request's repository and base branch are unknown. Set one with: git branch --set-upstream-to=origin/<branch>`,
+      );
+    }
+    remote = "origin";
+    base = head.stdout.trim().slice("origin/".length);
+  }
+  const url = await runCmd("git", ["remote", "get-url", remote], cwd);
+  if (url.code !== 0) {
+    throw new Error(`No remote named ${remote} in ${cwd}.`);
+  }
+  const repo = repoFromRemoteUrl(url.stdout);
+  if (!repo) {
+    throw new Error(
+      `The ${remote} remote is not a GitHub repository: ${url.stdout.trim()}`,
+    );
+  }
+  return { repo, base, remote };
+}
+
 async function openOrCreatePr(
   repo: string,
   name: string,
@@ -383,30 +616,22 @@ async function openOrCreatePr(
   if (!found) throw new Error(`Worktree not found: ${name}@${repo}`);
   const cwd = found.path;
 
-  const viewPr = async (): Promise<{ url: string; number: number } | null> => {
+  const target = await prTarget(cwd, name);
+
+  const branch = await currentBranch(cwd);
+
+  const viewPr = async (
+    which: string,
+  ): Promise<{ url: string; number: number } | null> => {
     const result = await runCmd(
       "gh",
-      ["pr", "view", "--json", "number,url,state"],
+      ["pr", "view", which, "--repo", target.repo, "--json", PR_VIEW_FIELDS],
       cwd,
     );
-    if (result.code !== 0) return null;
-    try {
-      const parsed: unknown = JSON.parse(result.stdout);
-      if (
-        isRecord(parsed) &&
-        parsed["state"] === "OPEN" &&
-        typeof parsed["url"] === "string" &&
-        typeof parsed["number"] === "number"
-      ) {
-        return { url: parsed["url"], number: parsed["number"] };
-      }
-    } catch {
-      // Fall through to create.
-    }
-    return null;
+    return result.code === 0 ? parsePrView(result.stdout) : null;
   };
 
-  const existing = await viewPr();
+  const existing = await viewPr(branch);
   if (existing) return { ...existing, created: false, warnings: [] };
 
   // `gh pr create` switches the branch upstream to the new PR branch.
@@ -426,12 +651,21 @@ async function openOrCreatePr(
 
   const warnings: string[] = [];
   const before = await upstreamOf();
+  let createdPr: { url: string; number: number } | null = null;
   try {
     const created = await runCmd(
       "gh",
-      title.trim() || body.trim()
-        ? ["pr", "create", "--title", title, "--body", body]
-        : ["pr", "create", "--fill"],
+      [
+        "pr",
+        "create",
+        "--repo",
+        target.repo,
+        "--base",
+        target.base,
+        ...(title.trim() || body.trim()
+          ? ["--title", title, "--body", body]
+          : ["--fill"]),
+      ],
       cwd,
       180_000,
     );
@@ -440,6 +674,7 @@ async function openOrCreatePr(
         created.stderr.trim() || `gh pr create failed (exit ${created.code})`,
       );
     }
+    createdPr = prFromCreateOutput(created.stdout);
   } finally {
     try {
       const after = await upstreamOf();
@@ -467,7 +702,11 @@ async function openOrCreatePr(
     }
   }
 
-  const opened = await viewPr();
+  // `gh pr create` sets the branch's upstream to the pull request's branch, and
+  // the upstream is put back above, so look the new PR up by what gh printed,
+  // then by the branch.
+  const opened =
+    (createdPr && (await viewPr(createdPr.url))) || (await viewPr(branch));
   if (!opened) {
     throw new Error(
       "PR create reported success but no PR is visible; refresh and inspect before retrying.",
@@ -669,33 +908,6 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
-  const effectiveModel = (request: {
-    conversation?: { model?: unknown };
-    body?: Record<string, unknown>;
-  }): string | undefined => {
-    const allowed = allowedModels();
-    const asked =
-      request.body && typeof request.body["model"] === "string"
-        ? (request.body["model"] as string).trim()
-        : "";
-    if (asked) return asked;
-    if (allowed.length === 0) return undefined;
-    const src = request.conversation?.model as
-      | string
-      | { provider?: unknown; modelId?: unknown; id?: unknown }
-      | undefined;
-    let srcSpec: string | undefined;
-    if (typeof src === "string") srcSpec = src;
-    else if (src && typeof src.provider === "string") {
-      if (typeof src.modelId === "string")
-        srcSpec = `${src.provider}/${src.modelId}`;
-      else if (typeof src.id === "string")
-        srcSpec = `${src.provider}/${src.id}`;
-    }
-    if (srcSpec && allowed.includes(srcSpec)) return undefined;
-    return allowed[0];
-  };
-
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time.
@@ -707,31 +919,22 @@ export default function createTimber(host: unknown, web: Web) {
         worktrees.map(async (w) => {
           const key = `${w.repo}\0${w.name}`;
           const [viewed, push] = await Promise.all([
-            runCmd("gh", ["pr", "view", "--json", "number,url,state"], w.path),
+            runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
             pushInfo(w.path, w.name),
           ]);
-          try {
-            const parsed: unknown =
-              viewed.code === 0 ? JSON.parse(viewed.stdout) : null;
-            if (
-              isRecord(parsed) &&
-              parsed["state"] === "OPEN" &&
-              typeof parsed["url"] === "string" &&
-              typeof parsed["number"] === "number"
-            ) {
-              return [
-                key,
-                {
-                  number: parsed["number"],
-                  url: parsed["url"],
-                  destExists: push.destExists,
-                  unpushed: push.unpushed,
-                  ff: push.ff,
-                },
-              ] as const;
-            }
-          } catch {
-            // No PR (or unreadable output): treated as none.
+          const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+          if (pr) {
+            return [
+              key,
+              {
+                number: pr.number,
+                url: pr.url,
+                destExists: push.destExists,
+                unpushed: push.unpushed,
+                ff: push.ff,
+                mergeBlocker: mergeBlocker(pr, push),
+              },
+            ] as const;
           }
           return [key, push] as const;
         }),
@@ -873,6 +1076,10 @@ export default function createTimber(host: unknown, web: Web) {
                   destExists: push.destExists,
                   unpushed: push.unpushed,
                   ff: push.ff,
+                  mergeBlocker: mergeBlocker(
+                    { ...result, draft: false, checksPassed: false },
+                    push,
+                  ),
                 },
               },
             };
@@ -944,6 +1151,83 @@ export default function createTimber(host: unknown, web: Web) {
     }
   });
 
+  // Merge the open PR once it passes mergeBlocker. Git and gh are read fresh,
+  // not from the panel's cache. --match-head-commit pins the merge to the
+  // commit that was checked, so a push after the check makes gh refuse.
+  web.route(
+    "POST",
+    "merge",
+    async ({ body }): Promise<{ merged: number; url: string }> => {
+      try {
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
+        if (found.statusError) {
+          throw web.error(409, "Git status unknown; refresh and inspect first");
+        }
+        const target = await prTarget(found.path, name);
+        const branch = await currentBranch(found.path);
+        const viewed = await runCmd(
+          "gh",
+          [
+            "pr",
+            "view",
+            branch,
+            "--repo",
+            target.repo,
+            "--json",
+            PR_VIEW_FIELDS,
+          ],
+          found.path,
+        );
+        const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+        if (!pr) throw web.error(409, `No open PR for ${name}@${repo}`);
+        const blocker = mergeBlocker(pr, await pushInfo(found.path, name));
+        if (blocker) {
+          throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
+        }
+        const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);
+        if (head.code !== 0) {
+          throw new Error(
+            head.stderr.trim() || `git rev-parse failed (exit ${head.code})`,
+          );
+        }
+        const merged = await runCmd(
+          "gh",
+          [
+            "pr",
+            "merge",
+            String(pr.number),
+            "--repo",
+            target.repo,
+            "--merge",
+            "--match-head-commit",
+            head.stdout.trim(),
+          ],
+          found.path,
+          180_000,
+        );
+        if (merged.code !== 0) {
+          throw new Error(
+            merged.stderr.trim() || `gh pr merge failed (exit ${merged.code})`,
+          );
+        }
+        prCache = null;
+        return { merged: pr.number, url: pr.url };
+      } catch (error) {
+        if (error instanceof Error && "status" in error) throw error;
+        const message = error instanceof Error ? error.message : "merge failed";
+        throw web.error(502, message);
+      }
+    },
+  );
+
   web.route(
     "POST",
     "remove",
@@ -969,52 +1253,57 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  // Open a session in a worktree's folder. Browser can't create sessions,
-  // so the panel (session-bound) calls this conversation-bound route,
-  // which starts a linked session with cwd set to the worktree path.
+  // Draft a PR title and body with the `pi` CLI, in the worktree's folder.
+  // The CLI reads the repository itself, so the draft follows the code and the
+  // commit messages without shipping them to the panel. It runs with the model
+  // and thinking level of the conversation that asked, when Pi has them.
   if (typeof web.conversationRoute === "function") {
     web.conversationRoute(
       "POST",
-      "open/:source",
+      "pr-draft/:source",
       async (request) => {
+        const { body } = request;
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
         try {
-          const repo =
-            typeof request.body["repo"] === "string"
-              ? request.body["repo"]
-              : "";
-          const name =
-            typeof request.body["name"] === "string"
-              ? request.body["name"]
-              : "";
-          const key =
-            typeof request.body["key"] === "string" ? request.body["key"] : "";
-          if (!key.trim())
-            throw web.error(400, "Missing open key; reload the panel.");
           checkRepoName(repo);
           checkBranchName(name, "worktree name");
-          const listing = await readListing();
-          const found = listing.worktrees.find(
-            (w) => w.repo === repo && w.name === name,
-          );
-          if (!found)
-            throw web.error(404, `Worktree not found: ${name}@${repo}`);
-          const model = effectiveModel(request);
-          const started = await request.linkedSessions.start(
-            {
-              title: `${name}@${repo}`,
-              message: `Working in worktree ${name}@${repo} at ${found.path}.`,
-              cwd: found.path,
-              ...(model ? { model } : {}),
-            },
-            `x.timber.open:${key.trim()}`,
-          );
-          return started;
-        } catch (error) {
-          if (error instanceof Error && "status" in error) throw error;
-          const message =
-            error instanceof Error ? error.message : "open failed";
-          throw web.error(502, message);
+        } catch {
+          throw web.error(400, "Invalid repository or worktree name.");
         }
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!found) throw web.error(404, "Worktree not found.");
+        if (found.statusError) throw web.error(409, "Git status is unknown.");
+        const model = request.conversation.model;
+        const modelArg =
+          model && typeof model.provider === "string"
+            ? `${model.provider}/${String(model.modelId)}`
+            : "";
+        const thinking = request.conversation.thinkingLevel;
+        const args = [
+          "-p",
+          "--no-session",
+          "--mode",
+          "text",
+          ...(modelArg ? ["--model", modelArg] : []),
+          ...(thinking ? ["--thinking", String(thinking)] : []),
+          PR_DRAFT_PROMPT,
+        ];
+        const run = await runPi(args, found.path, PR_DRAFT_TIMEOUT);
+        if (run.code !== 0) {
+          throw web.error(
+            502,
+            run.stderr.trim().slice(-400) || `pi exited ${String(run.code)}`,
+          );
+        }
+        const draft = parseDraft(run.stdout);
+        if (!draft) {
+          throw web.error(502, "pi did not return a title and body.");
+        }
+        return draft;
       },
       { conversation: "source", access: "steer" },
     );
