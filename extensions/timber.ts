@@ -1065,31 +1065,22 @@ export default function createTimber(host: unknown, web: Web) {
         const title = typeof body["title"] === "string" ? body["title"] : "";
         const prBody = typeof body["body"] === "string" ? body["body"] : "";
         const result = await openOrCreatePr(repo, name, title, prBody);
-        // Warm the PR cache so the row's upload icon can appear without
-        // waiting for the next background refresh.
+        // Warm the PR cache so the row can show the PR without waiting for the
+        // next background refresh. This is the refresh's own read, so the entry
+        // holds the real draft and check state; `openOrCreatePr` has already
+        // seen the PR with `gh pr view`, so the read finds it again.
         try {
           const listing = await readListing();
           const found = listing.worktrees.find(
             (w) => w.repo === repo && w.name === name,
           );
           if (found) {
-            const push = await pushInfo(found.path, name);
-            const key = `${repo}\0${name}`;
+            const { key, pr, push } = await readPushAndPr(found);
             prCache = {
               at: Date.now(),
               map: {
                 ...(prCache?.map ?? {}),
-                [key]: {
-                  number: result.number,
-                  url: result.url,
-                  destExists: push.destExists,
-                  unpushed: push.unpushed,
-                  ff: push.ff,
-                  mergeBlocker: mergeBlocker(
-                    { ...result, draft: false, checksPassed: false },
-                    push,
-                  ),
-                },
+                [key]: pr ? prEntry(pr, push) : push,
               },
             };
             try {
