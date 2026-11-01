@@ -76,6 +76,32 @@ export default function setup(pocket) {
     return `${verb}\0${w.repo}\0${w.name}`;
   }
 
+  // Calls the app's own API as the person in this tab. The module's routes run
+  // on the server, which cannot create or archive a session as a person; the
+  // browser can, with the same calls the app's own pages make.
+  async function callApp(path, body) {
+    const response = await fetch(`/api/${path}`, {
+      method: "POST",
+      headers: { "X-Pocket": "1", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      // A plain-text answer from the server: reported below.
+    }
+    if (!response.ok) {
+      throw new Error(
+        (payload && payload.error) ||
+          text.slice(0, 200) ||
+          `HTTP ${response.status}`,
+      );
+    }
+    return payload;
+  }
+
   function TimberPage() {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
@@ -295,6 +321,39 @@ export default function setup(pocket) {
       }
     };
 
+    // A session's folder is gone once its worktree is, so the sessions that
+    // worked there go to the archive too: the app keeps them, and brings one
+    // back when someone needs it. It answers how many it archived, of how many.
+    const archiveSessions = async (path) => {
+      let answer;
+      try {
+        answer = await pocket.api(`sessions?path=${encodeURIComponent(path)}`);
+      } catch {
+        // The sessions are unknown, so the notice says nothing about them.
+        return null;
+      }
+      const ids = ((answer && answer.sessions) || []).map(
+        (session) => session.id,
+      );
+      const results = await Promise.allSettled(
+        ids.map((id) => callApp(`sessions/${id}`, { archived: true })),
+      );
+      return {
+        total: ids.length,
+        done: results.filter((result) => result.status === "fulfilled").length,
+      };
+    };
+
+    // What the notice says about the sessions that went with the worktree.
+    const archivedWords = (archived) => {
+      if (!archived || archived.total === 0) return "";
+      const many =
+        archived.total === 1 ? "1 session" : `${archived.total} sessions`;
+      return archived.done === archived.total
+        ? ` Archived ${many}.`
+        : ` Archived ${archived.done} of ${many}.`;
+    };
+
     const doRemove = async (worktree) => {
       const key = `${worktree.repo}\0${worktree.name}`;
       if (confirmKey !== key) {
@@ -311,7 +370,8 @@ export default function setup(pocket) {
           { repo: worktree.repo, name: worktree.name },
           { method: "POST" },
         );
-        setNotice(`Removed ${result.removed}.`);
+        const archived = await archiveSessions(worktree.path);
+        setNotice(`Removed ${result.removed}.${archivedWords(archived)}`);
         const state = await pocket.api("state");
         setData(state);
         setError(null);
@@ -330,26 +390,10 @@ export default function setup(pocket) {
     // opening a worktree to work in, not to orchestrate. The title is the
     // Timber name, so a row of sessions says which worktree each one is in.
     const startSession = async (worktree) => {
-      const response = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "X-Pocket": "1", "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cwd: worktree.path,
-          title: `${worktree.name}@${worktree.repo}`,
-        }),
+      const payload = await callApp("sessions", {
+        cwd: worktree.path,
+        title: `${worktree.name}@${worktree.repo}`,
       });
-      const text = await response.text();
-      let payload = null;
-      try {
-        payload = text ? JSON.parse(text) : null;
-      } catch {
-        // A plain-text error from the server: reported below.
-      }
-      if (!response.ok) {
-        throw new Error(
-          (payload && payload.error) || text.slice(0, 200) || "Session failed",
-        );
-      }
       const target = payload && payload.id;
       if (typeof target !== "number") {
         throw new Error("The session did not open.");
