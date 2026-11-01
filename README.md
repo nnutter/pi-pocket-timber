@@ -10,7 +10,8 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests).
 - [`timber`](https://github.com/nnutter/timber) on the machine Pi Pocket runs on
 - [`gh`](https://cli.github.com/) signed in, for pull requests (`gh auth login`)
 - `git` (for upstream bookkeeping around `gh pr create`)
-- Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts)
+- Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts).
+  Archiving a removed worktree's sessions needs 0.20.0; an older server leaves those sessions as they are.
 
 ## Install
 
@@ -44,7 +45,7 @@ Write the sidecar again after the files change: it records their hashes.
 - **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
-- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`
+- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it; otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
   Note: timber's own ahead/behind counts against the base branch, so push state is measured directly with git and cached with the PR data
 - **Refresh**: lists worktrees and fetches all remotes; auto-fetch every 5 minutes so merged branches flip to Merged
@@ -53,6 +54,8 @@ Write the sidecar again after the files change: it records their hashes.
 ## Safety notes
 
 - Removal runs `timber remove` with no force flag, and only for worktrees that are clean with known status and merged (or 0 ahead / 0 behind).
+- Removal archives the sessions whose folder is the worktree's, so that no session is left in a folder that is gone.
+  The page archives them as the signed-in person; a failure to archive leaves the removal done, and the notice says so.
 - `gh pr create` normally switches the branch upstream; the extension snapshots `@{u}` first and restores it afterwards (or unsets what `gh` added), warning instead of failing silently.
 - The module shells out to `timber`, `gh`, and `git` as described above, and reads nothing else off the machine.
 
