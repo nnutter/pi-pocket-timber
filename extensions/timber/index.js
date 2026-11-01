@@ -124,7 +124,6 @@ export default function setup(pocket) {
     const [repoName, setRepoName] = useState("");
     const [alias, setAlias] = useState("");
     const [confirmKey, setConfirmKey] = useState(null);
-    const [prLinks, setPrLinks] = useState({});
     const [prWorktree, setPrWorktree] = useState(null);
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
@@ -425,11 +424,6 @@ export default function setup(pocket) {
           { method: "POST" },
         );
         setPrWorktree(null);
-        const key = `${worktree.repo}\0${worktree.name}`;
-        setPrLinks((prev) => ({
-          ...prev,
-          [key]: { url: result.url, number: result.number },
-        }));
         setNotice(
           [
             result.created
@@ -944,11 +938,17 @@ export default function setup(pocket) {
             const key = `${w.repo}\0${w.name}`;
             const armed = confirmKey === key;
             const cachePr = data && data.prs ? data.prs[key] : null;
-            const hasPr = Boolean(
-              w.pullRequest ||
-              (prLinks[key] && prLinks[key].url) ||
-              (cachePr && cachePr.url),
-            );
+            // The open PR comes from the server's own `gh pr view` read in the
+            // worktree's folder, so it also finds PRs made outside this page,
+            // in a session or on GitHub itself.
+            const prUrl = (cachePr && cachePr.url) || null;
+            const prLabel =
+              cachePr && cachePr.number !== undefined
+                ? `PR #${cachePr.number}`
+                : w.pullRequest
+                  ? `PR ${w.pullRequest}`
+                  : null;
+            const hasPr = Boolean(prLabel);
             // Compare with origin/<branch> when it exists. For a new remote
             // branch, compare with the upstream to find commits to publish.
             const canUpload = Boolean(
@@ -960,7 +960,7 @@ export default function setup(pocket) {
               cachePr && cachePr.destExists && !cachePr.ff && !w.statusError,
             );
             // The merge button needs an open PR. Its reason is null when ready.
-            const openPr = Boolean(cachePr && cachePr.url);
+            const openPr = Boolean(prUrl);
             const mergeReason = openPr ? (cachePr.mergeBlocker ?? null) : null;
             const mergeArmed = mergeKey === key;
             // A merged branch has nothing to publish, so it never offers a PR.
@@ -988,15 +988,40 @@ export default function setup(pocket) {
                 paddingBottom: "10px",
               }}
             >
-              <div style=${{ overflowWrap: "anywhere" }}>
-                <span title=${w.path}>${w.name}</span>
-                <span class="muted"> @ </span>
-                <span
-                  class="muted"
-                  title=${w.upstream ? `Upstream: ${w.upstream}` : "No upstream"}
-                >
-                  ${w.repo}
+              <div
+                style=${{ display: "flex", alignItems: "baseline", gap: "8px" }}
+              >
+                <span style=${{ minWidth: "0", overflowWrap: "anywhere" }}>
+                  <span title=${w.path}>${w.name}</span>
+                  <span class="muted"> @ </span>
+                  <span
+                    class="muted"
+                    title=${w.upstream ? `Upstream: ${w.upstream}` : "No upstream"}
+                  >
+                    ${w.repo}
+                  </span>
                 </span>
+                ${
+                  // Right-aligned, so the link sits in the same place on every
+                  // row and leaves the name as much room as it needs.
+                  prLabel &&
+                  (prUrl
+                    ? html`<a
+                        class="muted"
+                        href=${prUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title=${prUrl}
+                        style=${{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap" }}
+                        >${prLabel}</a
+                      >`
+                    : html`<span
+                        class="muted"
+                        title="The extension has no link for this number yet. Refresh to read it."
+                        style=${{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap" }}
+                        >${prLabel}</span
+                      >`)
+                }
               </div>
               <div
                 style=${{
@@ -1059,23 +1084,6 @@ export default function setup(pocket) {
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
                 </span>
-                ${
-                  prLinks[key]
-                    ? html`<a
-                        class="muted"
-                        href=${prLinks[key].url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style=${{ ...ROW_ITEM, flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis" }}
-                        >PR #${prLinks[key].number}</a
-                      >`
-                    : w.pullRequest &&
-                      html`<span
-                        class="muted"
-                        style=${{ ...ROW_ITEM, flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis" }}
-                        >PR ${w.pullRequest}</span
-                      >`
-                }
                 <div
                   style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto", paddingLeft: "12px" }}
                 >
@@ -1186,66 +1194,65 @@ export default function setup(pocket) {
                               </svg>`,
                             )}
                           </button>`
-                        : openPr
-                          ? // The merge button and the PR number link cover
-                            // this row, so no PR action belongs here.
-                            null
-                          : behindRemote
-                            ? html`<button
-                                class="button small"
-                                disabled
-                                title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
-                                aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                              >
-                                <${Icon}
-                                  path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
-                                  size=${16}
-                                />
-                              </button>`
-                            : html`<button
-                                class="button small"
-                                disabled=${busy || w.statusError}
-                                title=${
-                                  w.statusError
+                        : behindRemote && !openPr
+                          ? html`<button
+                              class="button small"
+                              disabled
+                              title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
+                              aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
+                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                            >
+                              <${Icon}
+                                path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
+                                size=${16}
+                              />
+                            </button>`
+                          : // One button for both: it opens the PR the row links,
+                            // and asks for its text only when there is none.
+                            html`<button
+                              class="button small"
+                              disabled=${busy || (!openPr && w.statusError)}
+                              title=${
+                                openPr
+                                  ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
+                                  : w.statusError
                                     ? "Git status unknown"
                                     : `Open or create a PR for ${w.name}@${w.repo}`
+                              }
+                              aria-label=${
+                                openPr
+                                  ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
+                                  : `Open or create a PR for ${w.name}@${w.repo}`
+                              }
+                              aria-disabled=${listingBusy || undefined}
+                              onClick=${() => {
+                                if (listingBusy) return;
+                                if (prUrl) {
+                                  window.open(prUrl, "_blank", "noopener");
+                                  return;
                                 }
-                                aria-label=${`Open or create a PR for ${w.name}@${w.repo}`}
-                                aria-disabled=${listingBusy || undefined}
-                                onClick=${() => {
-                                  if (listingBusy) return;
-                                  if (cachePr?.url || prLinks[key]) {
-                                    window.open(
-                                      (cachePr?.url ? cachePr : prLinks[key])
-                                        .url,
-                                      "_blank",
-                                      "noopener",
-                                    );
-                                  } else {
-                                    draftRun.current += 1;
-                                    setDrafting(false);
-                                    setPrTitle("");
-                                    setPrBody("");
-                                    setError(null);
-                                    setPrWorktree(w);
-                                  }
-                                }}
-                                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                                draftRun.current += 1;
+                                setDrafting(false);
+                                setPrTitle("");
+                                setPrBody("");
+                                setError(null);
+                                setPrWorktree(w);
+                              }}
+                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+                            >
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 16 16"
+                                fill="currentColor"
+                                aria-hidden="true"
+                                style=${{ flexShrink: 0 }}
                               >
-                                <svg
-                                  width="16"
-                                  height="16"
-                                  viewBox="0 0 16 16"
-                                  fill="currentColor"
-                                  aria-hidden="true"
-                                  style=${{ flexShrink: 0 }}
-                                >
-                                  <path
-                                    d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                                  />
-                                </svg>
-                              </button>`
+                                <path
+                                  d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                                />
+                              </svg>
+                            </button>`
                   }
                 </div>
               </div>
