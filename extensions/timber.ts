@@ -173,12 +173,18 @@ function checkRepoName(value: string): void {
   }
 }
 
+// The two timber commands read the same registry and answer apart, so they run
+// together: this read backs every state poll, and the pair took 0.8 s when one
+// waited for the other.
 async function readListing(): Promise<{
   repositories: string[];
   worktrees: Worktree[];
   warnings: string[];
 }> {
-  const reposResult = await runTimber(["repo", "list", "-q"]);
+  const [reposResult, listResult] = await Promise.all([
+    runTimber(["repo", "list", "-q"]),
+    runTimber(["list", "--json", "--sort", "recency"]),
+  ]);
   if (reposResult.code !== 0) {
     throw new Error(`timber repo list failed: ${reposResult.stderr.trim()}`);
   }
@@ -187,7 +193,6 @@ async function readListing(): Promise<{
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const listResult = await runTimber(["list", "--json", "--sort", "recency"]);
   if (listResult.code !== 0) {
     throw new Error(`timber list failed: ${listResult.stderr.trim()}`);
   }
