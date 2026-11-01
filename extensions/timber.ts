@@ -1,5 +1,5 @@
 /**
- * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a side panel.
+ * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a worktrees page, and from a panel on a wide screen.
  * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, and open-or-create PR per worktree.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";

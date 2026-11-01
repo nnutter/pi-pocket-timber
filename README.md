@@ -1,7 +1,7 @@
 # pi-pocket-timber
 
 A [Pi Pocket](https://github.com/TannerMidd/pi-pocket) drop-in for
-[Timber](https://github.com/nnutter/timber) worktrees: list, create, open sessions in, and safely remove managed Git worktrees from a side panel.
+[Timber](https://github.com/nnutter/timber) worktrees: list, create, open sessions in, and safely remove managed Git worktrees from a worktrees page, and from a panel on a wide screen.
 
 Wraps the `timber` CLI on the server (with `gh` for pull requests).
 
@@ -41,7 +41,7 @@ Write the sidecar again after the files change: it records their hashes.
 
 ## What it adds
 
-- **Timber worktrees panel** (rail + launcher): search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
+- **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`

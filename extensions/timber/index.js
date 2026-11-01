@@ -7,6 +7,11 @@ export const pocketApi = 1;
 export default function setup(pocket) {
   const { html, useEffect, useState, useRef, Loader, Spinner, Icon } = pocket;
 
+  // The Timber icon: two nodes on a branch, for the rail button and the panel's
+  // button.
+  const TIMBER_ICON =
+    "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4";
+
   // Status items in a worktree row share the 24px height of the row buttons.
   const ROW_ITEM = {
     display: "inline-flex",
@@ -1336,47 +1341,35 @@ export default function setup(pocket) {
     </section>`;
   }
 
+  pocket.page({
+    id: "timber",
+    title: "Worktrees",
+    component: TimberPage,
+  });
+  pocket.rail({
+    id: "timber",
+    title: "Timber",
+    iconPath: TIMBER_ICON,
+    page: "timber",
+  });
+  pocket.launcher({
+    id: "timber",
+    label: "Timber worktrees",
+    detail: "list, create, remove",
+    keywords: ["worktree", "repository", "branch", "timber"],
+    page: "timber",
+  });
+
+  // The panel is a second surface for a wide screen: a button in the top bar
+  // and one in the places. The rail button and the launcher use the page
+  // instead, because a panel shows only in a session: on a phone's session
+  // list, its rail button opened nothing.
   if (typeof pocket.panel === "function") {
     pocket.panel({
       id: "timber",
       title: "Worktrees",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
+      iconPath: TIMBER_ICON,
       component: TimberPage,
-    });
-    pocket.rail({
-      id: "timber",
-      title: "Timber",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
-      panel: "timber",
-    });
-    pocket.launcher({
-      id: "timber",
-      label: "Timber worktrees",
-      detail: "list, create, remove",
-      keywords: ["worktree", "repository", "branch", "timber"],
-      panel: "timber",
-    });
-  } else {
-    pocket.page({
-      id: "timber",
-      title: "Worktrees",
-      component: TimberPage,
-    });
-    pocket.rail({
-      id: "timber",
-      title: "Timber",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
-      page: "timber",
-    });
-    pocket.launcher({
-      id: "timber",
-      label: "Timber worktrees",
-      detail: "list, create, remove",
-      keywords: ["worktree", "repository", "branch", "timber"],
-      page: "timber",
     });
   }
 }
