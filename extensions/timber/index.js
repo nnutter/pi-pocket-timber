@@ -106,9 +106,9 @@ export default function setup(pocket) {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
     const [notice, setNotice] = useState("");
-    // The id of the action in flight, or null when idle. Any action locks the page.
-    const [pending, setPending] = useState(null);
-    const busy = pending !== null;
+    // The ids of the actions in flight. Any action locks the page.
+    const [running, setRunning] = useState(() => new Set());
+    const busy = running.size > 0;
     // True while a background list reload is in flight. Row buttons lock
     // so a tap can't land on a row that is about to move.
     const [listingBusy, setListingBusy] = useState(false);
@@ -156,11 +156,26 @@ export default function setup(pocket) {
       };
     }, [openMenu]);
 
+    // Mark one action's id as running or done, so a spinner shows for it and
+    // nothing else starts it again. A set is replaced rather than changed: the
+    // page re-renders when it is a new one.
+    const startAction = (id) => {
+      setRunning((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    };
+    const endAction = (id) => {
+      setRunning((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    };
+
     // A button's content, or a spinner in its place while its action runs.
     // The spinner is 0.85em, so 19px makes it 16px, the size of the icons, and
     // the fixed box keeps the button from shifting while it spins.
     const inFlight = (id, label, content) =>
-      pending === id
+      running.has(id)
         ? html`<span
             style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", width: "16px", height: "16px", fontSize: "19px" }}
             ><${Spinner} label=${label}
@@ -168,7 +183,7 @@ export default function setup(pocket) {
         : content;
 
     const doRefresh = async () => {
-      setPending("refresh");
+      startAction("refresh");
       setNotice("");
       try {
         await pocket.api("fetch", {}, { method: "POST" });
@@ -182,7 +197,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Refresh failed",
         );
       } finally {
-        setPending(null);
+        endAction("refresh");
       }
     };
 
@@ -258,7 +273,7 @@ export default function setup(pocket) {
         setError("Select a repository first.");
         return;
       }
-      setPending("create");
+      startAction("create");
       setNotice("");
       try {
         const result = await pocket.api(
@@ -287,7 +302,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Create failed",
         );
       } finally {
-        setPending(null);
+        endAction("create");
       }
     };
 
@@ -297,7 +312,7 @@ export default function setup(pocket) {
         setError("Enter a repository URL or path.");
         return;
       }
-      setPending("add");
+      startAction("add");
       setNotice("");
       try {
         const result = await pocket.api(
@@ -316,7 +331,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Add failed");
       } finally {
-        setPending(null);
+        endAction("add");
       }
     };
 
@@ -361,7 +376,7 @@ export default function setup(pocket) {
       }
       setConfirmKey(null);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      setPending(rowAction("remove", worktree));
+      startAction(rowAction("remove", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -379,7 +394,7 @@ export default function setup(pocket) {
           failure && failure.message ? failure.message : "Remove failed",
         );
       } finally {
-        setPending(null);
+        endAction(rowAction("remove", worktree));
       }
     };
 
@@ -401,21 +416,21 @@ export default function setup(pocket) {
     };
 
     const doOpen = async (worktree) => {
-      setPending(rowAction("open", worktree));
+      startAction(rowAction("open", worktree));
       setNotice("");
       try {
         await startSession(worktree);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Open failed");
       } finally {
-        setPending(null);
+        endAction(rowAction("open", worktree));
       }
     };
 
     // The PR is not opened in a tab here: the row links it, so the person
     // decides where to read it.
     const doPr = async (worktree, title, body) => {
-      setPending(rowAction("pr", worktree));
+      startAction(rowAction("pr", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -443,7 +458,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
-        setPending(null);
+        endAction(rowAction("pr", worktree));
       }
     };
 
@@ -484,7 +499,7 @@ export default function setup(pocket) {
     };
 
     const doPush = async (worktree) => {
-      setPending(rowAction("push", worktree));
+      startAction(rowAction("push", worktree));
       setNotice("");
       try {
         await pocket.api(
@@ -500,7 +515,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Push failed");
       } finally {
-        setPending(null);
+        endAction(rowAction("push", worktree));
       }
     };
 
@@ -514,7 +529,7 @@ export default function setup(pocket) {
       }
       setMergeKey(null);
       if (mergeTimer.current) clearTimeout(mergeTimer.current);
-      setPending(rowAction("merge", worktree));
+      startAction(rowAction("merge", worktree));
       setNotice("");
       try {
         const result = await pocket.api(
@@ -529,7 +544,7 @@ export default function setup(pocket) {
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Merge failed");
       } finally {
-        setPending(null);
+        endAction(rowAction("merge", worktree));
       }
     };
 
