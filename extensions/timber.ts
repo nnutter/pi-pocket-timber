@@ -1228,6 +1228,26 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
+  // The sessions that work in a folder, for removing the worktree there: the
+  // page archives them as the person who asked, because a route cannot archive.
+  // Only those this person sees, and only those still in the list. A server
+  // older than 0.20.0 has no `sessions()` and answers none.
+  web.route(
+    "GET",
+    "sessions",
+    async (request): Promise<{ sessions: { id: number; title: string }[] }> => {
+      const path = request.query.get("path") ?? "";
+      if (!path) throw web.error(400, "path is required");
+      if (typeof request.sessions !== "function") return { sessions: [] };
+      return {
+        sessions: request
+          .sessions()
+          .filter((session) => session.cwd === path && !session.archived)
+          .map((session) => ({ id: session.id, title: session.title })),
+      };
+    },
+  );
+
   web.route(
     "POST",
     "remove",
