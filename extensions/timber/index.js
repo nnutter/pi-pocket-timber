@@ -1380,7 +1380,7 @@ export default function setup(pocket) {
         <button
           class="button small"
           disabled=${busy}
-          title="Refresh: list worktrees and fetch all remotes"
+          title="Refresh: list worktrees and fetch their remotes"
           aria-label="Refresh"
           onClick=${doRefresh}
           style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}

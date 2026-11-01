@@ -342,13 +342,16 @@ async function fetchAllRepos(): Promise<{
   fetching = true;
   try {
     const listing = await readListing();
-    const answered = await mapPool(
-      listing.repositories,
-      FETCH_CONCURRENCY,
-      (repo) => runTimber(["git", `@${repo}`, "--", "fetch"]),
+    // Only a repository with worktrees can put a row on the page, and the fetch
+    // is for those rows: their merged flag compares the branch with the remote.
+    // A registered repository that has no worktrees has nothing to show, so it
+    // keeps its remote as it is.
+    const repos = [...new Set(listing.worktrees.map((w) => w.repo))].sort();
+    const answered = await mapPool(repos, FETCH_CONCURRENCY, (repo) =>
+      runTimber(["git", `@${repo}`, "--", "fetch"]),
     );
     const errors: string[] = [];
-    listing.repositories.forEach((repo, at) => {
+    repos.forEach((repo, at) => {
       const result = answered[at];
       if (!result || result.code === 0 || !result.stderr.trim()) return;
       errors.push(`${repo}: ${result.stderr.trim().split("\n")[0]}`);
@@ -940,7 +943,7 @@ const timberRepoAdd = defineTool({
 const timberFetch = defineTool({
   name: "timber_fetch",
   description:
-    "Fetch all Timber remotes so merged PRs show as Merged (timber git @repo -- fetch).",
+    "Fetch the remotes of the Timber repositories that have worktrees, so merged PRs show as Merged (timber git @repo -- fetch).",
   parameters: Type.Object({}),
   replay: "safe",
   execute: async () => {
