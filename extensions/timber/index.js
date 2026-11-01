@@ -321,6 +321,39 @@ export default function setup(pocket) {
       }
     };
 
+    // A session's folder is gone once its worktree is, so the sessions that
+    // worked there go to the archive too: the app keeps them, and brings one
+    // back when someone needs it. It answers how many it archived, of how many.
+    const archiveSessions = async (path) => {
+      let answer;
+      try {
+        answer = await pocket.api(`sessions?path=${encodeURIComponent(path)}`);
+      } catch {
+        // The sessions are unknown, so the notice says nothing about them.
+        return null;
+      }
+      const ids = ((answer && answer.sessions) || []).map(
+        (session) => session.id,
+      );
+      const results = await Promise.allSettled(
+        ids.map((id) => callApp(`sessions/${id}`, { archived: true })),
+      );
+      return {
+        total: ids.length,
+        done: results.filter((result) => result.status === "fulfilled").length,
+      };
+    };
+
+    // What the notice says about the sessions that went with the worktree.
+    const archivedWords = (archived) => {
+      if (!archived || archived.total === 0) return "";
+      const many =
+        archived.total === 1 ? "1 session" : `${archived.total} sessions`;
+      return archived.done === archived.total
+        ? ` Archived ${many}.`
+        : ` Archived ${archived.done} of ${many}.`;
+    };
+
     const doRemove = async (worktree) => {
       const key = `${worktree.repo}\0${worktree.name}`;
       if (confirmKey !== key) {
@@ -337,7 +370,8 @@ export default function setup(pocket) {
           { repo: worktree.repo, name: worktree.name },
           { method: "POST" },
         );
-        setNotice(`Removed ${result.removed}.`);
+        const archived = await archiveSessions(worktree.path);
+        setNotice(`Removed ${result.removed}.${archivedWords(archived)}`);
         const state = await pocket.api("state");
         setData(state);
         setError(null);
