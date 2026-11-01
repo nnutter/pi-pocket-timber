@@ -7,6 +7,11 @@ export const pocketApi = 1;
 export default function setup(pocket) {
   const { html, useEffect, useState, useRef, Loader, Spinner, Icon } = pocket;
 
+  // The Timber icon: two nodes on a branch, for the rail button and the panel's
+  // button.
+  const TIMBER_ICON =
+    "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4";
+
   // Status items in a worktree row share the 24px height of the row buttons.
   const ROW_ITEM = {
     display: "inline-flex",
@@ -1340,15 +1345,13 @@ export default function setup(pocket) {
     pocket.panel({
       id: "timber",
       title: "Worktrees",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
+      iconPath: TIMBER_ICON,
       component: TimberPage,
     });
     pocket.rail({
       id: "timber",
       title: "Timber",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
+      iconPath: TIMBER_ICON,
       panel: "timber",
     });
     pocket.launcher({
@@ -1367,8 +1370,7 @@ export default function setup(pocket) {
     pocket.rail({
       id: "timber",
       title: "Timber",
-      iconPath:
-        "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4",
+      iconPath: TIMBER_ICON,
       page: "timber",
     });
     pocket.launcher({
