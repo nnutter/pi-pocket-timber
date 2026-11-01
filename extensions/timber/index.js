@@ -71,10 +71,16 @@ export default function setup(pocket) {
     };
   }
 
-  /** The pending-action id for a verb on one worktree row. */
+  /** The action id for a verb on one worktree row. */
   function rowAction(verb, w) {
     return `${verb}\0${w.repo}\0${w.name}`;
   }
+
+  /** The verbs whose ids name one worktree's row actions. */
+  const ROW_VERBS = ["open", "pr", "push", "merge", "remove"];
+
+  /** The action ids that rewrite the listing, so the toolbar and forms wait. */
+  const TOOLBAR_ACTIONS = ["create", "add", "refresh"];
 
   // Calls the app's own API as the person in this tab. The module's routes run
   // on the server, which cannot create or archive a session as a person; the
@@ -106,9 +112,14 @@ export default function setup(pocket) {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
     const [notice, setNotice] = useState("");
-    // The ids of the actions in flight. Any action locks the page.
+    // The ids of the actions in flight. Each one locks what it changes: a
+    // row's action locks that row, and the actions that rewrite the listing
+    // lock the toolbar and the forms.
     const [running, setRunning] = useState(() => new Set());
-    const busy = running.size > 0;
+    const toolbarBusy = TOOLBAR_ACTIONS.some((id) => running.has(id));
+    /** True while an action runs on this worktree's row. */
+    const rowBusy = (w) =>
+      ROW_VERBS.some((verb) => running.has(rowAction(verb, w)));
     // True while a background list reload is in flight. Row buttons lock
     // so a tap can't land on a row that is about to move.
     const [listingBusy, setListingBusy] = useState(false);
@@ -438,7 +449,13 @@ export default function setup(pocket) {
           { repo: worktree.repo, name: worktree.name, title, body },
           { method: "POST" },
         );
-        setPrWorktree(null);
+        // Close this row's form only: another row may have opened one while
+        // this PR was being created.
+        setPrWorktree((open) =>
+          open && open.repo === worktree.repo && open.name === worktree.name
+            ? null
+            : open,
+        );
         setNotice(
           [
             result.created
@@ -631,7 +648,7 @@ export default function setup(pocket) {
             <button
               type="button"
               class="button small"
-              disabled=${busy || !data || data.repositories.length === 0}
+              disabled=${toolbarBusy || !data || data.repositories.length === 0}
               title="New worktree"
               aria-label="New worktree"
               onClick=${() => {
@@ -660,7 +677,7 @@ export default function setup(pocket) {
             <button
               type="button"
               class="button small"
-              disabled=${busy}
+              disabled=${toolbarBusy}
               title="More ways to add"
               aria-label="More ways to add"
               aria-haspopup="menu"
@@ -828,7 +845,7 @@ export default function setup(pocket) {
               <span class="small">Repository URL or path</span>
               <input
                 value=${source}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onInput=${(e) => setSource(e.target.value)}
                 placeholder="git@github.com:org/repo or /path/to/repo"
               />
@@ -839,7 +856,7 @@ export default function setup(pocket) {
               <span class="small">Repository name (optional)</span>
               <input
                 value=${repoName}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onInput=${(e) => setRepoName(e.target.value)}
               />
             </label>
@@ -849,7 +866,7 @@ export default function setup(pocket) {
               <span class="small">Alias (optional)</span>
               <input
                 value=${alias}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onInput=${(e) => setAlias(e.target.value)}
               />
             </label>
@@ -857,14 +874,14 @@ export default function setup(pocket) {
               <button
                 class="button primary"
                 type="submit"
-                disabled=${busy || !source.trim()}
+                disabled=${toolbarBusy || !source.trim()}
               >
                 ${inFlight("add", "Add repo", "Add repo")}
               </button>
               <button
                 type="button"
                 class="button"
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onClick=${() => setAdding(false)}
               >
                 Cancel
@@ -891,7 +908,7 @@ export default function setup(pocket) {
               <span class="small">Repository</span>
               <select
                 value=${createRepo || (data && data.repositories[0]) || ""}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onChange=${(e) => setCreateRepo(e.target.value)}
               >
                 ${(data ? data.repositories : []).map(
@@ -907,7 +924,7 @@ export default function setup(pocket) {
               >
               <input
                 value=${name}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 placeholder="Let Timber choose"
                 onInput=${(e) => setName(e.target.value)}
               />
@@ -918,19 +935,23 @@ export default function setup(pocket) {
               <span class="small">Upstream (optional)</span>
               <input
                 value=${upstream}
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 placeholder="Repository default"
                 onInput=${(e) => setUpstream(e.target.value)}
               />
             </label>
             <div style=${{ display: "flex", gap: "6px" }}>
-              <button class="button primary" type="submit" disabled=${busy}>
+              <button
+                class="button primary"
+                type="submit"
+                disabled=${toolbarBusy}
+              >
                 ${inFlight("create", "Create worktree", "Create worktree")}
               </button>
               <button
                 type="button"
                 class="button"
-                disabled=${busy}
+                disabled=${toolbarBusy}
                 onClick=${() => setCreating(false)}
               >
                 Cancel
@@ -1050,7 +1071,7 @@ export default function setup(pocket) {
               >
                 <button
                   class="button small"
-                  disabled=${busy}
+                  disabled=${toolbarBusy || rowBusy(w)}
                   title=${`Open session in ${w.path}`}
                   aria-label=${`Open session in ${w.name}@${w.repo}`}
                   aria-disabled=${listingBusy || undefined}
@@ -1113,7 +1134,7 @@ export default function setup(pocket) {
                     !canUpload &&
                     html`<button
                       class="button small"
-                      disabled=${busy || Boolean(mergeReason)}
+                      disabled=${toolbarBusy || rowBusy(w) || Boolean(mergeReason)}
                       aria-disabled=${listingBusy || undefined}
                       title=${
                         mergeReason
@@ -1160,7 +1181,7 @@ export default function setup(pocket) {
                     w.merged || removable
                       ? html`<button
                           class="button small"
-                          disabled=${busy || !removable}
+                          disabled=${toolbarBusy || rowBusy(w) || !removable}
                           aria-disabled=${listingBusy || undefined}
                           title=${
                             !removable
@@ -1180,7 +1201,7 @@ export default function setup(pocket) {
                       : canUpload
                         ? html`<button
                             class="button small"
-                            disabled=${busy}
+                            disabled=${toolbarBusy || rowBusy(w)}
                             aria-disabled=${listingBusy || undefined}
                             title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
                             aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
@@ -1226,7 +1247,7 @@ export default function setup(pocket) {
                             // and asks for its text only when there is none.
                             html`<button
                               class="button small"
-                              disabled=${busy || (!openPr && w.statusError)}
+                              disabled=${toolbarBusy || rowBusy(w) || (!openPr && w.statusError)}
                               title=${
                                 openPr
                                   ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
@@ -1278,7 +1299,7 @@ export default function setup(pocket) {
                 html`<form
                   onSubmit=${(event) => {
                     event.preventDefault();
-                    if (busy || drafting) return;
+                    if (toolbarBusy || rowBusy(w) || drafting) return;
                     if (!prTitle.trim() && prBody.trim()) {
                       setError(
                         "A PR subject is required when a body is provided.",
@@ -1302,7 +1323,7 @@ export default function setup(pocket) {
                     <span class="small">Subject</span>
                     <input
                       value=${prTitle}
-                      disabled=${busy || drafting}
+                      disabled=${toolbarBusy || rowBusy(w) || drafting}
                       onInput=${(e) => setPrTitle(e.target.value)}
                     />
                   </label>
@@ -1312,7 +1333,7 @@ export default function setup(pocket) {
                     <span class="small">Body</span>
                     <textarea
                       value=${prBody}
-                      disabled=${busy || drafting}
+                      disabled=${toolbarBusy || rowBusy(w) || drafting}
                       rows="5"
                       onInput=${(e) => setPrBody(e.target.value)}
                     ></textarea>
@@ -1323,7 +1344,7 @@ export default function setup(pocket) {
                     <button
                       class="button"
                       type="button"
-                      disabled=${busy || drafting || Boolean(prTitle.trim() || prBody.trim())}
+                      disabled=${toolbarBusy || rowBusy(w) || drafting || Boolean(prTitle.trim() || prBody.trim())}
                       title=${prTitle.trim() || prBody.trim() ? "Clear the subject and body to generate a draft" : "Generate a draft using the conversation model"}
                       onClick=${() => doDraft(prWorktree)}
                     >
@@ -1332,14 +1353,14 @@ export default function setup(pocket) {
                     <button
                       class="button primary"
                       type="submit"
-                      disabled=${busy || drafting}
+                      disabled=${toolbarBusy || rowBusy(w) || drafting}
                     >
                       ${inFlight(rowAction("pr", prWorktree), `Create PR for ${prWorktree.name}@${prWorktree.repo}`, "Create PR")}
                     </button>
                     <button
                       class="button"
                       type="button"
-                      disabled=${busy}
+                      disabled=${toolbarBusy || rowBusy(w)}
                       onClick=${() => {
                         draftRun.current += 1;
                         setDrafting(false);
@@ -1394,7 +1415,7 @@ export default function setup(pocket) {
         }
         <button
           class="button small"
-          disabled=${busy}
+          disabled=${toolbarBusy}
           title="Refresh: list worktrees and fetch their remotes"
           aria-label="Refresh"
           onClick=${doRefresh}
