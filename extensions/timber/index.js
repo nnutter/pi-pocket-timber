@@ -16,7 +16,7 @@ export default function setup(pocket) {
   const ROW_ITEM = {
     display: "inline-flex",
     alignItems: "center",
-    height: "24px",
+    height: "28px",
     boxSizing: "border-box",
     fontSize: "13px",
     whiteSpace: "nowrap",
@@ -41,36 +41,6 @@ export default function setup(pocket) {
     },
   ];
 
-  function badgeStyle(kind) {
-    if (kind === "merged")
-      return {
-        background: "#8957e5",
-        color: "var(--text)",
-        borderRadius: "4px",
-        padding: "2px 8px",
-      };
-    if (kind === "clean-pr")
-      return {
-        background: "color-mix(in srgb, var(--ok) 18%, transparent)",
-        color: "var(--ok)",
-        borderRadius: "4px",
-        padding: "2px 8px",
-      };
-    if (kind === "dirty")
-      return {
-        background: "color-mix(in srgb, var(--warn) 20%, transparent)",
-        color: "var(--warn)",
-        borderRadius: "4px",
-        padding: "2px 8px",
-      };
-    return {
-      background: "color-mix(in srgb, var(--muted) 18%, transparent)",
-      color: "var(--muted)",
-      borderRadius: "4px",
-      padding: "2px 8px",
-    };
-  }
-
   /** The key that names one worktree's row, in the state's PR map and its ids. */
   function rowKey(w) {
     return `${w.repo}\0${w.name}`;
@@ -79,6 +49,17 @@ export default function setup(pocket) {
   /** The action id for a verb on one worktree row. */
   function rowAction(verb, w) {
     return `${verb}\0${rowKey(w)}`;
+  }
+
+  /**
+   * The colour a row's state had as a badge, now carried by its buttons: merged
+   * purple, dirty amber, clean with a PR green, plain clean the muted grey.
+   */
+  function stateColor(kind) {
+    if (kind === "merged") return "#8957e5";
+    if (kind === "dirty") return "var(--warn)";
+    if (kind === "clean-pr") return "var(--ok)";
+    return "var(--muted)";
   }
 
   /** The verbs whose ids name one worktree's row actions. */
@@ -128,6 +109,14 @@ export default function setup(pocket) {
     // True while a background list reload is in flight. Row buttons lock
     // so a tap can't land on a row that is about to move.
     const [listingBusy, setListingBusy] = useState(false);
+    // A phone-width panel shows how far the branch leads, not how far it lags:
+    // the two numbers and two buttons do not share the line there.
+    const [showBehind, setShowBehind] = useState(
+      () =>
+        typeof window === "undefined" ||
+        typeof window.matchMedia !== "function" ||
+        !window.matchMedia("(max-width: 600px)").matches,
+    );
     const listingCount = useRef(0);
     const [search, setSearch] = useState("");
     // The folder of the session this tab shows, or null. The pin needs it and
@@ -289,6 +278,19 @@ export default function setup(pocket) {
         clearInterval(timer);
         stopFetched();
       };
+    }, []);
+
+    useEffect(() => {
+      if (
+        typeof window === "undefined" ||
+        typeof window.matchMedia !== "function"
+      ) {
+        return undefined;
+      }
+      const narrow = window.matchMedia("(max-width: 600px)");
+      const update = () => setShowBehind(!narrow.matches);
+      narrow.addEventListener("change", update);
+      return () => narrow.removeEventListener("change", update);
     }, []);
 
     useEffect(
@@ -1065,6 +1067,22 @@ export default function setup(pocket) {
             // A merged branch has nothing to publish, so it never offers a PR.
             // Uncommitted work blocks removal, so show the delete button disabled.
             const removable = safeToRemove(w);
+            // Exactly one action button per row. A row with an open PR offers
+            // the merge once it is ready; until then the button opens the pull
+            // request, which is what its link in the name row does too.
+            const action =
+              w.merged || removable
+                ? "delete"
+                : canUpload
+                  ? "push"
+                  : openPr
+                    ? mergeReason === null
+                      ? "merge"
+                      : "open-pr"
+                    : behindRemote
+                      ? "blocked"
+                      : "pr";
+
             const removeBlocked = w.statusError
               ? "Git status unknown"
               : "Merged, but has uncommitted changes. Commit or discard them to remove.";
@@ -1075,7 +1093,9 @@ export default function setup(pocket) {
                 : hasPr
                   ? "clean-pr"
                   : "clean";
-            const label = w.merged ? "Merged" : !w.clean ? "Dirty" : "Clean";
+            // The badge used to say the state in words. Its column is gone, so
+            // the row's action buttons show the state as their colour.
+            const stateStyle = { color: stateColor(kind) };
             // The row of the worktree this session works in: a pill in a gutter
             // says why it sits above the rows the sort put there. Every row
             // keeps that gutter, so their text and buttons line up.
@@ -1092,6 +1112,7 @@ export default function setup(pocket) {
                 paddingTop: "10px",
                 paddingBottom: "10px",
                 paddingLeft: "10px",
+                paddingRight: "10px",
               }}
             >
               ${
@@ -1136,16 +1157,7 @@ export default function setup(pocket) {
                       >`)
                 }
               </div>
-              <div
-                style=${{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  flexWrap: "nowrap",
-                  overflow: "hidden",
-                  position: "relative",
-                }}
-              >
+              <div style=${{ display: "flex", alignItems: "center" }}>
                 <button
                   class="button small"
                   disabled=${toolbarBusy || rowBusy(w)}
@@ -1155,36 +1167,22 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doOpen(w);
                   }}
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", marginRight: "10px" }}
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
                 <span
-                  class="muted mono"
-                  style=${{ ...ROW_ITEM, gap: "6px", flex: "1 1 0" }}
+                  class="muted"
+                  title=${
+                    w.todoTotal === undefined
+                      ? "No TODOs"
+                      : `TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`
+                  }
+                  style=${{ ...ROW_ITEM, width: "52px", marginLeft: "20px", gap: "4px", flex: "none", overflow: "hidden" }}
                 >
-                  <span
-                    title=${`${w.ahead ?? 0} commit${w.ahead === 1 ? "" : "s"} ahead`}
-                    style=${{ display: "inline-block", width: "4ch" }}
-                    >↑${w.ahead ?? 0}</span
-                  >
-                  <span
-                    title=${`${w.behind ?? 0} commit${w.behind === 1 ? "" : "s"} behind`}
-                    style=${{ display: "inline-block", width: "4ch" }}
-                    >↓${w.behind ?? 0}</span
-                  >
+                  ${w.todoTotal === undefined ? "" : html`<${Icon} name="check" size=${14} />`}
+                  ${w.todoTotal === undefined ? "" : `${w.todoDone ?? 0}/${w.todoTotal}`}
                 </span>
-                ${
-                  w.todoTotal !== undefined &&
-                  html`<span
-                    class="muted"
-                    title=${`TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`}
-                    style=${{ ...ROW_ITEM, gap: "4px", flex: "1 1 0" }}
-                  >
-                    <${Icon} name="check" size=${14} />
-                    ${w.todoDone ?? 0}/${w.todoTotal}
-                  </span>`
-                }
                 <span
                   class="muted"
                   title=${
@@ -1192,26 +1190,95 @@ export default function setup(pocket) {
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ ...ROW_ITEM, gap: "4px", flex: "1 1 0" }}
+                  style=${{ ...ROW_ITEM, width: "48px", marginLeft: "8px", gap: "4px", flex: "none", overflow: "hidden" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
                 </span>
                 <div
-                  style=${{ display: "flex", flex: "none", alignItems: "center", gap: "6px", marginLeft: "auto", paddingLeft: "12px" }}
+                  style=${{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto" }}
                 >
                   <span
-                    style=${{ ...badgeStyle(kind), ...ROW_ITEM, padding: "0 8px", minWidth: "60px", justifyContent: "center", fontWeight: "500" }}
-                    >${label}</span
+                    class="muted mono"
+                    style=${{ ...ROW_ITEM, width: showBehind ? "64px" : "46px", flex: "none", justifyContent: "flex-end" }}
                   >
+                    ${
+                      (w.ahead ?? 0) > 0 &&
+                      html`<span
+                        title=${`${w.ahead} commit${w.ahead === 1 ? "" : "s"} ahead`}
+                        >↑${w.ahead}</span
+                      >`
+                    }
+                    ${
+                      showBehind &&
+                      (w.behind ?? 0) > 0 &&
+                      html`<span
+                        title=${`${w.behind} commit${w.behind === 1 ? "" : "s"} behind`}
+                        >↓${w.behind}</span
+                      >`
+                    }
+                  </span>
                   ${
-                    // Push is the only useful action while commits are
-                    // unpushed: merge stays blocked until they are published.
-                    openPr &&
-                    !canUpload &&
+                    action === "delete" &&
                     html`<button
                       class="button small"
-                      disabled=${toolbarBusy || rowBusy(w) || Boolean(mergeReason)}
+                      disabled=${toolbarBusy || rowBusy(w) || !removable}
+                      aria-disabled=${listingBusy || undefined}
+                      title=${
+                        !removable
+                          ? removeBlocked
+                          : armed
+                            ? `Click again to delete ${w.name}@${w.repo} within 5s`
+                            : `Remove ${w.name}@${w.repo}`
+                      }
+                      aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
+                      onClick=${() => {
+                        if (!listingBusy) doRemove(w);
+                      }}
+                      style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                    >
+                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
+                    </button>`
+                  }
+                  ${
+                    action === "push" &&
+                    html`<button
+                      class="button small"
+                      disabled=${toolbarBusy || rowBusy(w)}
+                      aria-disabled=${listingBusy || undefined}
+                      title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
+                      aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
+                      onClick=${() => {
+                        if (!listingBusy) doPush(w);
+                      }}
+                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                    >
+                      ${inFlight(
+                        rowAction("push", w),
+                        `Push unpushed commits for ${w.name}@${w.repo}`,
+                        html`<svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 16 16"
+                          fill="currentColor"
+                          aria-hidden="true"
+                          style=${{ flexShrink: 0 }}
+                        >
+                          <path
+                            d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
+                          />
+                          <path
+                            d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
+                          />
+                        </svg>`,
+                      )}
+                    </button>`
+                  }
+                  ${
+                    action === "merge" &&
+                    html`<button
+                      class="button small"
+                      disabled=${toolbarBusy || rowBusy(w)}
                       aria-disabled=${listingBusy || undefined}
                       title=${
                         mergeReason
@@ -1228,7 +1295,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doMerge(w);
                       }}
-                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0, color: mergeArmed ? "var(--accent)" : undefined }}
+                      style=${{ ...stateStyle, ...(mergeArmed ? { color: "var(--accent)" } : {}), display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       ${inFlight(
                         rowAction("merge", w),
@@ -1255,117 +1322,68 @@ export default function setup(pocket) {
                     </button>`
                   }
                   ${
-                    w.merged || removable
-                      ? html`<button
-                          class="button small"
-                          disabled=${toolbarBusy || rowBusy(w) || !removable}
-                          aria-disabled=${listingBusy || undefined}
-                          title=${
-                            !removable
-                              ? removeBlocked
-                              : armed
-                                ? `Click again to delete ${w.name}@${w.repo} within 5s`
-                                : `Remove ${w.name}@${w.repo}`
-                          }
-                          aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
-                          onClick=${() => {
-                            if (!listingBusy) doRemove(w);
-                          }}
-                          style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                        >
-                          ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
-                        </button>`
-                      : canUpload
-                        ? html`<button
-                            class="button small"
-                            disabled=${toolbarBusy || rowBusy(w)}
-                            aria-disabled=${listingBusy || undefined}
-                            title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
-                            aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
-                            onClick=${() => {
-                              if (!listingBusy) doPush(w);
-                            }}
-                            style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                          >
-                            ${inFlight(
-                              rowAction("push", w),
-                              `Push unpushed commits for ${w.name}@${w.repo}`,
-                              html`<svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 16 16"
-                                fill="currentColor"
-                                aria-hidden="true"
-                                style=${{ flexShrink: 0 }}
-                              >
-                                <path
-                                  d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"
-                                />
-                                <path
-                                  d="M11.78 4.72a.749.749 0 1 1-1.06 1.06L8.75 3.811V9.5a.75.75 0 0 1-1.5 0V3.811L5.28 5.78a.749.749 0 1 1-1.06-1.06l3.25-3.25a.749.749 0 0 1 1.06 0l3.25 3.25Z"
-                                />
-                              </svg>`,
-                            )}
-                          </button>`
-                        : behindRemote && !openPr
-                          ? html`<button
-                              class="button small"
-                              disabled
-                              title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
-                              aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                            >
-                              <${Icon}
-                                path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
-                                size=${16}
-                              />
-                            </button>`
-                          : // One button for both: it opens the PR the row links,
-                            // and asks for its text only when there is none.
-                            html`<button
-                              class="button small"
-                              disabled=${toolbarBusy || rowBusy(w) || (!openPr && w.statusError)}
-                              title=${
-                                openPr
-                                  ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
-                                  : w.statusError
-                                    ? "Git status unknown"
-                                    : `Open or create a PR for ${w.name}@${w.repo}`
-                              }
-                              aria-label=${
-                                openPr
-                                  ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
-                                  : `Open or create a PR for ${w.name}@${w.repo}`
-                              }
-                              aria-disabled=${listingBusy || undefined}
-                              onClick=${() => {
-                                if (listingBusy) return;
-                                if (prUrl) {
-                                  window.open(prUrl, "_blank", "noopener");
-                                  return;
-                                }
-                                draftRun.current += 1;
-                                setDrafting(false);
-                                setPrTitle("");
-                                setPrBody("");
-                                setError(null);
-                                setPrWorktree(w);
-                              }}
-                              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
-                            >
-                              <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 16 16"
-                                fill="currentColor"
-                                aria-hidden="true"
-                                style=${{ flexShrink: 0 }}
-                              >
-                                <path
-                                  d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                                />
-                              </svg>
-                            </button>`
+                    (action === "pr" || action === "open-pr") &&
+                    html`<button
+                      class="button small"
+                      disabled=${toolbarBusy || rowBusy(w) || (!openPr && w.statusError)}
+                      title=${
+                        openPr
+                          ? mergeReason
+                            ? `Cannot merge yet (${mergeReason}); open PR #${cachePr.number}`
+                            : `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
+                          : w.statusError
+                            ? "Git status unknown"
+                            : `Open or create a PR for ${w.name}@${w.repo}`
+                      }
+                      aria-label=${
+                        openPr
+                          ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
+                          : `Open or create a PR for ${w.name}@${w.repo}`
+                      }
+                      aria-disabled=${listingBusy || undefined}
+                      onClick=${() => {
+                        if (listingBusy) return;
+                        if (prUrl) {
+                          window.open(prUrl, "_blank", "noopener");
+                          return;
+                        }
+                        draftRun.current += 1;
+                        setDrafting(false);
+                        setPrTitle("");
+                        setPrBody("");
+                        setError(null);
+                        setPrWorktree(w);
+                      }}
+                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                        style=${{ flexShrink: 0 }}
+                      >
+                        <path
+                          d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                        />
+                      </svg>
+                    </button>`
+                  }
+                  ${
+                    action === "blocked" &&
+                    html`<button
+                      class="button small"
+                      disabled
+                      title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
+                      aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
+                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                    >
+                      <${Icon}
+                        path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
+                        size=${16}
+                      />
+                    </button>`
                   }
                 </div>
               </div>
