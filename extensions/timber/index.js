@@ -130,6 +130,9 @@ export default function setup(pocket) {
     const [listingBusy, setListingBusy] = useState(false);
     const listingCount = useRef(0);
     const [search, setSearch] = useState("");
+    // The folder of the session this tab shows, or null. The pin needs it and
+    // the page cannot read it, so the server answers it.
+    const [sessionPath, setSessionPath] = useState(null);
     const [sort, setSort] = useState("recent");
     const [creating, setCreating] = useState(false);
     const [adding, setAdding] = useState(false);
@@ -225,6 +228,33 @@ export default function setup(pocket) {
       if (m < 60) return `${m}m ago`;
       return `${Math.floor(m / 60)}h ago`;
     };
+
+    useEffect(() => {
+      let alive = true;
+      const readFolder = (id) => {
+        if (id === null) {
+          if (alive) setSessionPath(null);
+          return;
+        }
+        void pocket
+          .api(`folder?session=${id}`)
+          .then((answer) => {
+            if (alive) setSessionPath((answer && answer.path) || null);
+          })
+          .catch(() => {
+            if (alive) setSessionPath(null);
+          });
+      };
+      readFolder(pocket.conversationId());
+      const stop =
+        typeof pocket.onConversation === "function"
+          ? pocket.onConversation((id) => readFolder(id))
+          : () => undefined;
+      return () => {
+        alive = false;
+        stop();
+      };
+    }, []);
 
     useEffect(() => {
       let alive = true;
@@ -589,8 +619,32 @@ export default function setup(pocket) {
 
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
+
+    // The worktree the session this tab shows works in: its own folder, or the
+    // deepest worktree folder that holds the session's, since a session can
+    // start below a worktree's root. Null when this tab shows no session, or
+    // one that works somewhere else.
+    const pinnedKey = (() => {
+      if (!sessionPath) return null;
+      let best = null;
+      for (const w of worktrees) {
+        const root = (w.path || "").replace(/\/+$/, "");
+        if (!root) continue;
+        if (sessionPath !== root && !sessionPath.startsWith(`${root}/`)) {
+          continue;
+        }
+        if (!best || root.length > best.length) {
+          best = { length: root.length, key: rowKey(w) };
+        }
+      }
+      return best ? best.key : null;
+    })();
+    const pinned =
+      (pinnedKey && worktrees.find((w) => rowKey(w) === pinnedKey)) || null;
+
     const filtered = worktrees
       .filter((w) => {
+        if (pinned && rowKey(w) === pinnedKey) return false;
         if (!needle) return true;
         const fields = [
           `${w.name}@${w.repo}`,
@@ -618,6 +672,10 @@ export default function setup(pocket) {
           return a.name.localeCompare(b.name) || a.repo.localeCompare(b.repo);
         return 0;
       });
+
+    // The session's worktree stays in view and first, whatever the search and
+    // the sort say, so the row a person is working in does not move away.
+    const rows = pinned ? [pinned, ...filtered] : filtered;
 
     const safeToRemove = (w) =>
       w.clean &&
@@ -966,7 +1024,7 @@ export default function setup(pocket) {
         }
         ${
           data &&
-          filtered.length === 0 &&
+          rows.length === 0 &&
           html`<p>
             ${worktrees.length ? "No matching worktrees." : "No worktrees yet. Create one above."}
           </p>`
@@ -975,7 +1033,7 @@ export default function setup(pocket) {
         <ul
           style=${{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
         >
-          ${filtered.map((w) => {
+          ${rows.map((w) => {
             const key = rowKey(w);
             const armed = confirmKey === key;
             const cachePr = data && data.prs ? data.prs[key] : null;
@@ -1018,17 +1076,31 @@ export default function setup(pocket) {
                   ? "clean-pr"
                   : "clean";
             const label = w.merged ? "Merged" : !w.clean ? "Dirty" : "Clean";
+            // The row of the worktree this session works in: a pill in a gutter
+            // says why it sits above the rows the sort put there. Every row
+            // keeps that gutter, so their text and buttons line up.
+            const current = pinned !== null && rowKey(w) === pinnedKey;
             return html`<li
               key=${`${w.repo}/${w.name}`}
+              title=${current ? "This session works here" : undefined}
               style=${{
+                position: "relative",
                 display: "flex",
                 flexDirection: "column",
                 gap: "6px",
                 borderTop: "1px solid var(--line)",
                 paddingTop: "10px",
                 paddingBottom: "10px",
+                paddingLeft: "10px",
               }}
             >
+              ${
+                current &&
+                html`<span
+                  aria-hidden="true"
+                  style=${{ position: "absolute", left: "2px", top: "9px", bottom: "9px", width: "3px", borderRadius: "2px", background: "var(--accent)", opacity: "0.85" }}
+                ></span>`
+              }
               <div
                 style=${{ display: "flex", alignItems: "baseline", gap: "8px" }}
               >
@@ -1402,7 +1474,7 @@ export default function setup(pocket) {
           class="small muted"
           aria-live="polite"
           style=${{ marginRight: "auto" }}
-          >${data ? `${filtered.length} of ${worktrees.length} worktrees` : ""}</span
+          >${data ? `${rows.length} of ${worktrees.length} worktrees` : ""}</span
         >
         ${
           data
