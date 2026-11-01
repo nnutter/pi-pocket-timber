@@ -1341,44 +1341,35 @@ export default function setup(pocket) {
     </section>`;
   }
 
+  pocket.page({
+    id: "timber",
+    title: "Worktrees",
+    component: TimberPage,
+  });
+  pocket.rail({
+    id: "timber",
+    title: "Timber",
+    iconPath: TIMBER_ICON,
+    page: "timber",
+  });
+  pocket.launcher({
+    id: "timber",
+    label: "Timber worktrees",
+    detail: "list, create, remove",
+    keywords: ["worktree", "repository", "branch", "timber"],
+    page: "timber",
+  });
+
+  // The panel is a second surface for a wide screen: a button in the top bar
+  // and one in the places. The rail button and the launcher use the page
+  // instead, because a panel shows only in a session: on a phone's session
+  // list, its rail button opened nothing.
   if (typeof pocket.panel === "function") {
     pocket.panel({
       id: "timber",
       title: "Worktrees",
       iconPath: TIMBER_ICON,
       component: TimberPage,
-    });
-    pocket.rail({
-      id: "timber",
-      title: "Timber",
-      iconPath: TIMBER_ICON,
-      panel: "timber",
-    });
-    pocket.launcher({
-      id: "timber",
-      label: "Timber worktrees",
-      detail: "list, create, remove",
-      keywords: ["worktree", "repository", "branch", "timber"],
-      panel: "timber",
-    });
-  } else {
-    pocket.page({
-      id: "timber",
-      title: "Worktrees",
-      component: TimberPage,
-    });
-    pocket.rail({
-      id: "timber",
-      title: "Timber",
-      iconPath: TIMBER_ICON,
-      page: "timber",
-    });
-    pocket.launcher({
-      id: "timber",
-      label: "Timber worktrees",
-      detail: "list, create, remove",
-      keywords: ["worktree", "repository", "branch", "timber"],
-      page: "timber",
     });
   }
 }
