@@ -76,6 +76,32 @@ export default function setup(pocket) {
     return `${verb}\0${w.repo}\0${w.name}`;
   }
 
+  // Calls the app's own API as the person in this tab. The module's routes run
+  // on the server, which cannot create or archive a session as a person; the
+  // browser can, with the same calls the app's own pages make.
+  async function callApp(path, body) {
+    const response = await fetch(`/api/${path}`, {
+      method: "POST",
+      headers: { "X-Pocket": "1", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      // A plain-text answer from the server: reported below.
+    }
+    if (!response.ok) {
+      throw new Error(
+        (payload && payload.error) ||
+          text.slice(0, 200) ||
+          `HTTP ${response.status}`,
+      );
+    }
+    return payload;
+  }
+
   function TimberPage() {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
@@ -330,26 +356,10 @@ export default function setup(pocket) {
     // opening a worktree to work in, not to orchestrate. The title is the
     // Timber name, so a row of sessions says which worktree each one is in.
     const startSession = async (worktree) => {
-      const response = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "X-Pocket": "1", "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cwd: worktree.path,
-          title: `${worktree.name}@${worktree.repo}`,
-        }),
+      const payload = await callApp("sessions", {
+        cwd: worktree.path,
+        title: `${worktree.name}@${worktree.repo}`,
       });
-      const text = await response.text();
-      let payload = null;
-      try {
-        payload = text ? JSON.parse(text) : null;
-      } catch {
-        // A plain-text error from the server: reported below.
-      }
-      if (!response.ok) {
-        throw new Error(
-          (payload && payload.error) || text.slice(0, 200) || "Session failed",
-        );
-      }
       const target = payload && payload.id;
       if (typeof target !== "number") {
         throw new Error("The session did not open.");
