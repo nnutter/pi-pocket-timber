@@ -42,7 +42,8 @@ Write the sidecar again after the files change: it records their hashes.
 
 ## What it adds
 
-- **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
+- **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts.
+  Each row's buttons work on that row alone, so several worktrees can push, merge, or open a PR at once
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
