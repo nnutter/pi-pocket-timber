@@ -413,7 +413,9 @@ export default function setup(pocket) {
       }
     };
 
-    const doPr = async (worktree, title, body, tab) => {
+    // The PR is not opened in a tab here: the row links it, so the person
+    // decides where to read it.
+    const doPr = async (worktree, title, body) => {
       setPending(rowAction("pr", worktree));
       setNotice("");
       try {
@@ -428,19 +430,23 @@ export default function setup(pocket) {
           ...prev,
           [key]: { url: result.url, number: result.number },
         }));
-        const notices = result.warnings || [];
-        try {
-          if (!tab || tab.closed) throw new Error("Tab unavailable");
-          tab.location.href = result.url;
-        } catch {
-          notices.push(
-            "The PR tab could not open. Use the PR link in the row.",
-          );
-        }
-        if (notices.length) setNotice(notices.join("; "));
+        setNotice(
+          [
+            result.created
+              ? `Created PR #${result.number}.`
+              : `PR #${result.number} already exists.`,
+            ...(result.warnings || []),
+          ].join(" "),
+        );
         setError(null);
+        // Re-read so the row shows the PR and its merge state. The server
+        // warmed its PR cache before it answered.
+        try {
+          setData(await pocket.api("state"));
+        } catch {
+          // The PR exists; the next poll shows it.
+        }
       } catch (failure) {
-        if (tab && !tab.closed) tab.close();
         setError(failure && failure.message ? failure.message : "PR failed");
       } finally {
         setPending(null);
@@ -1257,14 +1263,7 @@ export default function setup(pocket) {
                       );
                       return;
                     }
-                    let tab = null;
-                    try {
-                      tab = window.open("", "_blank");
-                      if (tab) tab.opener = null;
-                    } catch {
-                      // The PR link in the row remains available.
-                    }
-                    void doPr(prWorktree, prTitle, prBody, tab);
+                    void doPr(prWorktree, prTitle, prBody);
                   }}
                   style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
                 >
