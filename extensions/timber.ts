@@ -511,6 +511,35 @@ async function pushInfo(
   return { destExists, unpushed, ff: base.code === 0 };
 }
 
+// The cache entry for a worktree that has an open PR.
+function prEntry(pr: PrView, push: PushInfo): PrEntry {
+  return {
+    number: pr.number,
+    url: pr.url,
+    destExists: push.destExists,
+    unpushed: push.unpushed,
+    ff: push.ff,
+    mergeBlocker: mergeBlocker(pr, push),
+  };
+}
+
+// The open PR and push state of one worktree, read in the worktree's folder,
+// with the key that the PR cache and the rows use.
+async function readPushAndPr(
+  w: Worktree,
+): Promise<{ key: string; pr: PrView | null; push: PushInfo }> {
+  const key = `${w.repo}\0${w.name}`;
+  const [viewed, push] = await Promise.all([
+    runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
+    pushInfo(w.path, w.name),
+  ]);
+  return {
+    key,
+    pr: viewed.code === 0 ? parsePrView(viewed.stdout) : null,
+    push,
+  };
+}
+
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
 // URL names no repository on GitHub.
 function repoFromRemoteUrl(url: string): string | null {
@@ -917,32 +946,12 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       const entries = await Promise.all(
         worktrees.map(async (w) => {
-          const key = `${w.repo}\0${w.name}`;
-          const [viewed, push] = await Promise.all([
-            runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
-            pushInfo(w.path, w.name),
-          ]);
-          const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
-          if (pr) {
-            return [
-              key,
-              {
-                number: pr.number,
-                url: pr.url,
-                destExists: push.destExists,
-                unpushed: push.unpushed,
-                ff: push.ff,
-                mergeBlocker: mergeBlocker(pr, push),
-              },
-            ] as const;
-          }
-          return [key, push] as const;
+          const { key, pr, push } = await readPushAndPr(w);
+          return [key, pr ? prEntry(pr, push) : push] as const;
         }),
       );
       const map: Record<string, PrEntry> = {};
-      for (const entry of entries) {
-        if (entry) map[entry[0]] = entry[1];
-      }
+      for (const [key, entry] of entries) map[key] = entry;
       prCache = { at: Date.now(), map };
       try {
         web.send("fetched", { at: prCache.at });
