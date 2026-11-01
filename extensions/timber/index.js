@@ -71,9 +71,14 @@ export default function setup(pocket) {
     };
   }
 
+  /** The key that names one worktree's row, in the state's PR map and its ids. */
+  function rowKey(w) {
+    return `${w.repo}\0${w.name}`;
+  }
+
   /** The action id for a verb on one worktree row. */
   function rowAction(verb, w) {
-    return `${verb}\0${w.repo}\0${w.name}`;
+    return `${verb}\0${rowKey(w)}`;
   }
 
   /** The verbs whose ids name one worktree's row actions. */
@@ -971,7 +976,7 @@ export default function setup(pocket) {
           style=${{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
         >
           ${filtered.map((w) => {
-            const key = `${w.repo}\0${w.name}`;
+            const key = rowKey(w);
             const armed = confirmKey === key;
             const cachePr = data && data.prs ? data.prs[key] : null;
             // The open PR comes from the server's own `gh pr view` read in the
