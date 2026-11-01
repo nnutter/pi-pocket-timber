@@ -45,7 +45,11 @@ Write the sidecar again after the files change: it records their hashes.
 - **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
-- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it; otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`
+- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
+- **PR link**: each row links its open pull request, right-aligned in the name row.
+  The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open
+- **PR button**: opens that link, or opens the form that creates the pull request with `gh pr create` (`--fill`, or a `pi`-written draft) when the row has none.
+  Creating one does not open a browser tab: the notice names the PR, and the row links it
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
   Note: timber's own ahead/behind counts against the base branch, so push state is measured directly with git and cached with the PR data
 - **Refresh**: lists worktrees and fetches all remotes; auto-fetch every 5 minutes so merged branches flip to Merged
