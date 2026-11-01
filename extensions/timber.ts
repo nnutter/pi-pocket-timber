@@ -305,6 +305,35 @@ async function addRepository(
   return { repository: added[0], warnings: after.warnings };
 }
 
+// `items` run through `run`, `limit` of them at a time, with the answers in
+// the order given. Each `timber git @repo -- fetch` waits on the network, so a
+// pass over every repository takes a burst of fetches rather than their sum;
+// the limit keeps the burst from reaching every remote at once.
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const answers = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const at = next;
+      next += 1;
+      const item = items[at];
+      if (at >= items.length || item === undefined) return;
+      answers[at] = await run(item);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return answers;
+}
+
+// How many repositories fetch at once.
+const FETCH_CONCURRENCY = 4;
+
 async function fetchAllRepos(): Promise<{
   fetchedAt: number;
   errors: string[];
@@ -313,13 +342,17 @@ async function fetchAllRepos(): Promise<{
   fetching = true;
   try {
     const listing = await readListing();
+    const answered = await mapPool(
+      listing.repositories,
+      FETCH_CONCURRENCY,
+      (repo) => runTimber(["git", `@${repo}`, "--", "fetch"]),
+    );
     const errors: string[] = [];
-    for (const repo of listing.repositories) {
-      const result = await runTimber(["git", `@${repo}`, "--", "fetch"]);
-      if (result.code !== 0 && result.stderr.trim()) {
-        errors.push(`${repo}: ${result.stderr.trim().split("\n")[0]}`);
-      }
-    }
+    listing.repositories.forEach((repo, at) => {
+      const result = answered[at];
+      if (!result || result.code === 0 || !result.stderr.trim()) return;
+      errors.push(`${repo}: ${result.stderr.trim().split("\n")[0]}`);
+    });
     lastFetchAt = Date.now();
     lastFetchError = errors.length > 0 ? errors.join("; ") : null;
     return { fetchedAt: lastFetchAt, errors };
