@@ -1297,6 +1297,15 @@ export default function createTimber(host: unknown, web: Web) {
         if (!pr) throw web.error(409, `No open PR for ${name}@${repo}`);
         const blocker = mergeBlocker(pr, await pushInfo(found.path, name));
         if (blocker) {
+          // The row drew this button from a reading that can be a minute old,
+          // and this read is the one that refused it: hand the row the fresh
+          // reading, so it stops offering a merge that cannot happen.
+          try {
+            await refreshWorktreeState(repo, name);
+            web.send("fetched", { at: Date.now() });
+          } catch {
+            // The row's entry stays dropped, so the next poll reads it fresh.
+          }
           throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
         }
         const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);

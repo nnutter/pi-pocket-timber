@@ -615,6 +615,14 @@ export default function setup(pocket) {
         setError(null);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Merge failed");
+        // The route read the PR again to refuse the merge, and it handed the
+        // row that reading: show it, instead of a button that can only fail
+        // again. The next poll would say the same thing a minute later.
+        try {
+          setData(await pocket.api("state"));
+        } catch {
+          // Keep the reason on screen; the next poll re-reads the row.
+        }
       } finally {
         endAction(rowAction("merge", worktree));
       }
