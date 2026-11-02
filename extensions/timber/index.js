@@ -179,8 +179,6 @@ export default function setup(pocket) {
     const [prBody, setPrBody] = useState("");
     const [drafting, setDrafting] = useState(false);
     const draftRun = useRef(0);
-    const [mergeKey, setMergeKey] = useState(null);
-    const mergeTimer = useRef(null);
     // The id of the open popover ("add"), or null. Each popover's anchor
     // element is kept in menuAnchors so an outside tap can close it.
     const [openMenu, setOpenMenu] = useState(null);
@@ -336,17 +334,10 @@ export default function setup(pocket) {
 
     useEffect(
       () => () => {
-        if (mergeTimer.current) clearTimeout(mergeTimer.current);
         draftRun.current += 1;
       },
       [],
     );
-
-    const armMerge = (key) => {
-      setMergeKey(key);
-      if (mergeTimer.current) clearTimeout(mergeTimer.current);
-      mergeTimer.current = setTimeout(() => setMergeKey(null), 5000);
-    };
 
     const doCreate = async (event) => {
       event.preventDefault();
@@ -602,16 +593,10 @@ export default function setup(pocket) {
       }
     };
 
-    // Merging is the one action here that cannot be undone from the panel, so
-    // it takes two clicks. The server re-checks readiness before it merges.
+    // One click merges: the server re-reads the PR and refuses it while a
+    // blocker stands, and it pins the merge to the head commit it just read,
+    // so a tap merges the PR the row shows.
     const doMerge = async (worktree) => {
-      const key = `${worktree.repo}\0${worktree.name}`;
-      if (mergeKey !== key) {
-        armMerge(key);
-        return;
-      }
-      setMergeKey(null);
-      if (mergeTimer.current) clearTimeout(mergeTimer.current);
       startAction(rowAction("merge", worktree));
       setNotice("");
       try {
@@ -1096,7 +1081,6 @@ export default function setup(pocket) {
             // The merge button needs an open PR. Its reason is null when ready.
             const openPr = Boolean(prUrl);
             const mergeReason = openPr ? (cachePr.mergeBlocker ?? null) : null;
-            const mergeArmed = mergeKey === key;
             // A removal needs a worktree that is merged or fully in sync and
             // clean; otherwise the worktree is not going anywhere.
             const removable = safeToRemove(w);
@@ -1316,19 +1300,13 @@ export default function setup(pocket) {
                       title=${
                         mergeReason
                           ? `Cannot merge: ${mergeReason}`
-                          : mergeArmed
-                            ? `Click again to merge PR #${cachePr.number} within 5s`
-                            : `Merge PR #${cachePr.number}`
+                          : `Merge PR #${cachePr.number}`
                       }
-                      aria-label=${
-                        mergeArmed
-                          ? `Confirm merge of PR #${cachePr.number} for ${w.name}@${w.repo}`
-                          : `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`
-                      }
+                      aria-label=${`Merge PR #${cachePr.number} for ${w.name}@${w.repo}`}
                       onClick=${() => {
                         if (!listingBusy) doMerge(w);
                       }}
-                      style=${{ ...actionStyle, ...(mergeArmed ? { color: "var(--accent)" } : {}), display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       ${inFlight(
                         rowAction("merge", w),
