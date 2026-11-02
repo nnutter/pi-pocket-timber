@@ -7,9 +7,9 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests).
 
 ## Requirements
 
-- [`timber`](https://github.com/nnutter/timber) on the machine Pi Pocket runs on
-- [`gh`](https://cli.github.com/) signed in, for pull requests (`gh auth login`)
-- `git` (for upstream bookkeeping around `gh pr create`)
+- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`)
+- [`gh`](https://cli.github.com/) signed in, to read and merge pull requests (`gh auth login`)
+- `git` (for the worktree's commits and push state)
 - Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts).
   Archiving a removed worktree's sessions and pinning the session's worktree need 0.20.0; an older server leaves those sessions as they are, and lists the worktrees in their plain order.
 
@@ -54,7 +54,7 @@ Write the sidecar again after the files change: it records their hashes.
 - **PR link**: each row links its open pull request, right-aligned in the name row.
   The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open
 - **Action button**: one per row, chosen by what the row needs, and drawn only when it can act.
-  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not); unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (`gh pr create --fill`, or a `pi`-written draft).
+  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not); unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (a subject and body, or an empty form that describes the commits ahead of the branch's upstream, or a `pi`-written draft).
   A merged worktree with uncommitted changes, or one whose git status is unknown, shows no button and says why in a note.
   Creating one does not open a browser tab: the notice names the PR, and the row links it
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
@@ -69,7 +69,8 @@ Write the sidecar again after the files change: it records their hashes.
 - Removal runs `timber remove` with no force flag, and only for worktrees that are clean with known status and merged (or 0 ahead / 0 behind).
 - Removal archives the sessions whose folder is the worktree's, so that no session is left in a folder that is gone.
   The page archives them as the signed-in person; a failure to archive leaves the removal done, and the notice says so.
-- `gh pr create` normally switches the branch upstream; the extension snapshots `@{u}` first and restores it afterwards (or unsets what `gh` added), warning instead of failing silently.
+- `timber pr create` names the base repository and branch from the branch's upstream, and refuses a branch GitHub does not have, with the push command to run.
+  It never pushes, and it never changes the branch's upstream, so the extension removes neither; creating a PR no longer edits git config.
 - The module shells out to `timber`, `gh`, and `git` as described above, and reads nothing else off the machine.
 
 ## License
