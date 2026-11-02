@@ -52,14 +52,40 @@ export default function setup(pocket) {
   }
 
   /**
-   * The color a row's state had as a badge, now carried by its buttons: merged
-   * purple, dirty amber, clean with a PR green, plain clean the muted gray.
+   * The color of a row's one action button: green when the button can do its
+   * job on a clean worktree, amber while the worktree is dirty or the pull
+   * request's checks are still running, red when something is in the way, and
+   * purple for a removal. A button that cannot work is not drawn at all.
+   *
+   * Push, a new pull request, running checks and a removal wear the dimmer
+   * shade of their color; a merge and the two reds wear the color itself.
    */
-  function stateColor(kind) {
-    if (kind === "merged") return "#8957e5";
-    if (kind === "dirty") return "var(--warn)";
-    if (kind === "clean-pr") return "var(--ok)";
+  function actionColor(action, w, checks) {
+    if (action === "delete") return dimShade("#8957e5");
+    if (action === "merge") return "var(--ok)";
+    if (action === "push" || action === "create-pr") {
+      return dimShade(w.clean && !w.statusError ? "var(--ok)" : "var(--warn)");
+    }
+    if (action === "open-pr") {
+      return checks === "failed" ? "var(--err)" : dimShade("var(--warn)");
+    }
+    if (action === "blocked") return "var(--err)";
     return "var(--muted)";
+  }
+
+  /** A color drawn back into the row's background, as the picker's shade 1. */
+  function dimShade(color) {
+    return `color-mix(in srgb, ${color} 78%, var(--bg))`;
+  }
+
+  /** The key that names one worktree's row, in the state's PR map and its ids. */
+  function rowKey(w) {
+    return `${w.repo}\0${w.name}`;
+  }
+
+  /** The action id for a verb on one worktree row. */
+  function rowAction(verb, w) {
+    return `${verb}\0${rowKey(w)}`;
   }
 
   /** The verbs whose ids name one worktree's row actions. */
@@ -1049,7 +1075,6 @@ export default function setup(pocket) {
                 : w.pullRequest
                   ? `PR ${w.pullRequest}`
                   : null;
-            const hasPr = Boolean(prLabel);
             // Compare with origin/<branch> when it exists. For a new remote
             // branch, compare with the upstream to find commits to publish.
             const canUpload = Boolean(
@@ -1064,14 +1089,17 @@ export default function setup(pocket) {
             const openPr = Boolean(prUrl);
             const mergeReason = openPr ? (cachePr.mergeBlocker ?? null) : null;
             const mergeArmed = mergeKey === key;
-            // A merged branch has nothing to publish, so it never offers a PR.
-            // Uncommitted work blocks removal, so show the delete button disabled.
+            // A removal needs a worktree that is merged or fully in sync and
+            // clean; otherwise the worktree is not going anywhere.
             const removable = safeToRemove(w);
-            // Exactly one action button per row. A row with an open PR offers
-            // the merge once it is ready; until then the button opens the pull
-            // request, which is what its link in the name row does too.
-            const action =
-              w.merged || removable
+            // Exactly one action button per row, and only when it can act. A
+            // removal or a merge that cannot happen is not drawn; the row's
+            // note and the PR link carry the rest.
+            const action = w.merged
+              ? removable
+                ? "delete"
+                : null
+              : removable
                 ? "delete"
                 : canUpload
                   ? "push"
@@ -1081,21 +1109,14 @@ export default function setup(pocket) {
                       : "open-pr"
                     : behindRemote
                       ? "blocked"
-                      : "pr";
+                      : w.statusError
+                        ? null
+                        : "create-pr";
 
-            const removeBlocked = w.statusError
-              ? "Git status unknown"
-              : "Merged, but has uncommitted changes. Commit or discard them to remove.";
-            const kind = w.merged
-              ? "merged"
-              : !w.clean
-                ? "dirty"
-                : hasPr
-                  ? "clean-pr"
-                  : "clean";
-            // The badge used to say the state in words. Its column is gone, so
-            // the row's action buttons show the state as their color.
-            const stateStyle = { color: stateColor(kind) };
+            // The color says what the one button will do, and whether it can.
+            const actionStyle = {
+              color: actionColor(action, w, cachePr && cachePr.checks),
+            };
             // The row of the worktree this session works in: a pill in a gutter
             // says why it sits above the rows the sort put there. Every row
             // keeps that gutter, so their text and buttons line up.
@@ -1222,20 +1243,18 @@ export default function setup(pocket) {
                     action === "delete" &&
                     html`<button
                       class="button small"
-                      disabled=${toolbarBusy || rowBusy(w) || !removable}
+                      disabled=${toolbarBusy || rowBusy(w)}
                       aria-disabled=${listingBusy || undefined}
                       title=${
-                        !removable
-                          ? removeBlocked
-                          : armed
-                            ? `Click again to delete ${w.name}@${w.repo} within 5s`
-                            : `Remove ${w.name}@${w.repo}`
+                        armed
+                          ? `Click again to delete ${w.name}@${w.repo} within 5s`
+                          : `Remove ${w.name}@${w.repo}`
                       }
                       aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
                       onClick=${() => {
                         if (!listingBusy) doRemove(w);
                       }}
-                      style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
                     </button>`
@@ -1251,7 +1270,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doPush(w);
                       }}
-                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       ${inFlight(
                         rowAction("push", w),
@@ -1295,7 +1314,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doMerge(w);
                       }}
-                      style=${{ ...stateStyle, ...(mergeArmed ? { color: "var(--accent)" } : {}), display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, ...(mergeArmed ? { color: "var(--accent)" } : {}), display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       ${inFlight(
                         rowAction("merge", w),
@@ -1322,7 +1341,7 @@ export default function setup(pocket) {
                     </button>`
                   }
                   ${
-                    (action === "pr" || action === "open-pr") &&
+                    (action === "create-pr" || action === "open-pr") &&
                     html`<button
                       class="button small"
                       disabled=${toolbarBusy || rowBusy(w) || (!openPr && w.statusError)}
@@ -1354,7 +1373,7 @@ export default function setup(pocket) {
                         setError(null);
                         setPrWorktree(w);
                       }}
-                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       <svg
                         width="16"
@@ -1377,7 +1396,7 @@ export default function setup(pocket) {
                       disabled
                       title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
                       aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                      style=${{ ...stateStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
                       <${Icon}
                         path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
@@ -1468,9 +1487,13 @@ export default function setup(pocket) {
                 </form>`
               }
               ${
-                w.statusError &&
+                (w.statusError || (w.merged && !removable)) &&
                 html`<p class="small muted" role="status">
-                  Git status could not be read. Removal is disabled.
+                  ${
+                    w.statusError
+                      ? "Git status could not be read. Removal is disabled."
+                      : "Merged, but has uncommitted changes. Commit or discard them to remove."
+                  }
                 </p>`
               }
             </li>`;
