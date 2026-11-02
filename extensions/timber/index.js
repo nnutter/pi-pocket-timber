@@ -12,6 +12,9 @@ export default function setup(pocket) {
   const TIMBER_ICON =
     "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4";
 
+  // The TODO icon: a checklist, for the rail button and the panel's button.
+  const TODO_ICON = "M4 4h16v16H4zM8.5 12l2.5 2.5L16 9";
+
   /** The trash path of a removal button in a worktree row. */
   const TRASH_PATH =
     "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6";
@@ -1543,6 +1546,255 @@ export default function setup(pocket) {
     </section>`;
   }
 
+  /**
+   * The TODO list of one worktree, or of the list that its repository shares
+   * with every worktree of that repository. The file is Markdown checkboxes;
+   * timber resolves it, and the server edits one line at a time.
+   */
+  function TodoPanel() {
+    const sessionPath = useSessionPath();
+    // The listing, for the worktrees to choose from. Its pull request cache is
+    // not read here, so a panel that only shows TODOs costs no `gh` call.
+    const [listing, setListing] = useState(null);
+    const [listingError, setListingError] = useState(null);
+    // The worktree that the person chose in the picker, or null to follow the
+    // session. It goes back to null when the tab shows another session.
+    const [chosen, setChosen] = useState(null);
+    const [scope, setScope] = useState("worktree");
+    const [list, setList] = useState(null);
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const readRun = useRef(0);
+    const lastSessionPath = useRef(null);
+
+    useEffect(() => {
+      let alive = true;
+      const load = async () => {
+        try {
+          const state = await pocket.api("state");
+          if (!alive) return;
+          setListing(state);
+          setListingError(null);
+        } catch (failure) {
+          if (!alive) return;
+          setListingError(
+            failure && failure.message ? failure.message : "Timber failed",
+          );
+        }
+      };
+      void load();
+      const timer = setInterval(() => {
+        void load();
+      }, 15000);
+      return () => {
+        alive = false;
+        clearInterval(timer);
+      };
+    }, []);
+
+    useEffect(() => {
+      if (
+        lastSessionPath.current !== null &&
+        lastSessionPath.current !== sessionPath
+      ) {
+        setChosen(null);
+      }
+      lastSessionPath.current = sessionPath;
+    }, [sessionPath]);
+
+    const worktrees = (listing && listing.worktrees) || [];
+    // The chosen worktree, or the session's, or the first one. The picker holds
+    // the worktree's place in this list, so the row's ids stay out of the DOM.
+    const picked =
+      (chosen &&
+        (worktrees.find(
+          (w) => w.repo === chosen.repo && w.name === chosen.name,
+        ) ??
+          null)) ||
+      null;
+    const current =
+      picked || findSessionWorktree(worktrees, sessionPath) || worktrees[0];
+    const currentKey = current ? `${current.repo}/${current.name}` : null;
+    const currentAt = current ? worktrees.indexOf(current) : -1;
+
+    // Read the list when the worktree or the scope changes, and again every
+    // 15 s: a session may write TODO.md while the panel is open.
+    useEffect(() => {
+      if (!currentKey || !current) return undefined;
+      const run = ++readRun.current;
+      let alive = true;
+      const load = async () => {
+        try {
+          const answer = await pocket.api(
+            `todo?repo=${encodeURIComponent(current.repo)}&name=${encodeURIComponent(current.name)}&scope=${scope}`,
+          );
+          if (!alive || run !== readRun.current) return;
+          setList(answer);
+          setError(null);
+        } catch (failure) {
+          if (!alive || run !== readRun.current) return;
+          setList(null);
+          setError(
+            failure && failure.message ? failure.message : "TODO failed",
+          );
+        }
+      };
+      setLoading(true);
+      void load().finally(() => {
+        if (alive && run === readRun.current) setLoading(false);
+      });
+      const timer = setInterval(() => {
+        void load();
+      }, 15000);
+      return () => {
+        alive = false;
+        clearInterval(timer);
+      };
+    }, [currentKey, scope]);
+
+    const scopeButton = (id, label) =>
+      html`<button
+        type="button"
+        class=${scope === id ? "on" : ""}
+        aria-pressed=${scope === id}
+        onClick=${() => setScope(id)}
+      >
+        ${label}
+      </button>`;
+
+    if (listing === null && listingError === null) {
+      return html`<${Loader} label="Reading TODOs" />`;
+    }
+    if (listing === null) {
+      return html`<div class="error-box">${listingError}</div>`;
+    }
+    if (!current) {
+      return html`<p style=${{ padding: "12px" }}>
+        No worktrees yet, so there is no TODO list to show.
+      </p>`;
+    }
+
+    const todos = (list && list.todos) || [];
+    const done = list ? list.summary.complete : 0;
+    const total = list ? list.summary.complete + list.summary.incomplete : 0;
+
+    return html`<section
+      style=${{
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        height: "100%",
+        padding: "12px 12px 0",
+        fontSize: "13px",
+      }}
+    >
+      <div
+        class="segmented"
+        role="group"
+        aria-label="Which TODO list"
+        style=${{ flex: "none" }}
+      >
+        ${scopeButton("worktree", "Worktree")}
+        ${scopeButton("repo", "Repository")}
+      </div>
+      <select
+        aria-label="Worktree"
+        value=${String(currentAt)}
+        onChange=${(e) => {
+          const next = worktrees[Number(e.target.value)];
+          setChosen(next ? { repo: next.repo, name: next.name } : null);
+        }}
+        style=${{ flex: "none" }}
+      >
+        ${worktrees.map(
+          (w, at) =>
+            html`<option key=${w.path} value=${String(at)}>
+              ${w.name}@${w.repo}
+            </option>`,
+        )}
+      </select>
+      <div
+        style=${{ flex: "1", minHeight: "0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" }}
+      >
+        ${error && html`<div class="error-box">${error}</div>`}
+        ${
+          loading &&
+          !list &&
+          !error &&
+          html`<${Loader} label="Reading TODOs" />`
+        }
+        ${
+          list &&
+          todos.length === 0 &&
+          html`<p class="muted">
+            No tasks in
+            ${scope === "repo" ? "this repository's list" : "this worktree's list"}.
+          </p>`
+        }
+        <ul
+          style=${{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+        >
+          ${todos.map(
+            (todo) =>
+              html`<li
+                key=${`${todo.id}`}
+                style=${{ borderTop: "1px solid var(--line)", paddingLeft: `${todo.depth * 14}px` }}
+              >
+                <label
+                  style=${{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "7px 0", minWidth: "0" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked=${todo.complete}
+                    disabled
+                    aria-label=${`${todo.complete ? "Done" : "Open"}: ${todo.title}`}
+                    style=${{ flex: "none", width: "15px", height: "15px", margin: "2px 0 0", padding: "0", accentColor: "var(--accent)" }}
+                  />
+                  <span
+                    style=${{
+                      minWidth: "0",
+                      overflowWrap: "anywhere",
+                      ...(todo.complete
+                        ? {
+                            color: "var(--muted)",
+                            textDecoration: "line-through",
+                          }
+                        : {}),
+                    }}
+                    >${todo.title}</span
+                  >
+                </label>
+              </li>`,
+          )}
+        </ul>
+      </div>
+      <div
+        style=${{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flex: "none",
+          borderTop: "1px solid var(--line)",
+          padding: "8px 0",
+        }}
+      >
+        <span class="small muted" aria-live="polite"
+          >${list ? `${done} of ${total} done` : ""}</span
+        >
+        <span
+          class="small muted mono"
+          title=${
+            scope === "repo"
+              ? "The list that every worktree of this repository shares"
+              : "This worktree's own list"
+          }
+          style=${{ marginLeft: "auto", flex: "none" }}
+          >${scope === "repo" ? "TODO.repo.md" : "TODO.md"}</span
+        >
+      </div>
+    </section>`;
+  }
+
   pocket.page({
     id: "timber",
     title: "Worktrees",
@@ -1562,6 +1814,25 @@ export default function setup(pocket) {
     page: "timber",
   });
 
+  pocket.page({
+    id: "todos",
+    title: "TODOs",
+    component: TodoPanel,
+  });
+  pocket.rail({
+    id: "todos",
+    title: "TODOs",
+    iconPath: TODO_ICON,
+    page: "todos",
+  });
+  pocket.launcher({
+    id: "todos",
+    label: "Timber TODOs",
+    detail: "worktree and repository lists",
+    keywords: ["todo", "task", "checklist", "timber"],
+    page: "todos",
+  });
+
   // The panel is a second surface for a wide screen: a button in the top bar
   // and one in the places. The rail button and the launcher use the page
   // instead, because a panel shows only in a session: on a phone's session
@@ -1572,6 +1843,14 @@ export default function setup(pocket) {
       title: "Worktrees",
       iconPath: TIMBER_ICON,
       component: TimberPage,
+    });
+  }
+  if (typeof pocket.panel === "function") {
+    pocket.panel({
+      id: "todos",
+      title: "TODOs",
+      iconPath: TODO_ICON,
+      component: TodoPanel,
     });
   }
 }
