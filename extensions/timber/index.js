@@ -1564,8 +1564,20 @@ export default function setup(pocket) {
     const [list, setList] = useState(null);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
+    // The text of the item being added, and the id and text of the item whose
+    // removal is armed: its next tap removes it, as in the worktree rows.
+    const [draft, setDraft] = useState("");
+    const [armed, setArmed] = useState(null);
+    // A write locks the list that it writes to, so a tap cannot land on a list
+    // that the answer is about to replace.
+    const [busy, setBusy] = useState(false);
+    // Reading again after a write: the file is the truth, so every change
+    // re-reads it, and the poll restarts with the new list.
+    const [reloadTick, setReloadTick] = useState(0);
     const readRun = useRef(0);
     const lastSessionPath = useRef(null);
+    const draftInput = useRef(null);
+    const armedTimer = useRef(null);
 
     useEffect(() => {
       let alive = true;
@@ -1605,13 +1617,9 @@ export default function setup(pocket) {
     const worktrees = (listing && listing.worktrees) || [];
     // The chosen worktree, or the session's, or the first one. The picker holds
     // the worktree's place in this list, so the row's ids stay out of the DOM.
-    const picked =
-      (chosen &&
-        (worktrees.find(
-          (w) => w.repo === chosen.repo && w.name === chosen.name,
-        ) ??
-          null)) ||
-      null;
+    const picked = chosen
+      ? worktrees.find((w) => w.repo === chosen.repo && w.name === chosen.name)
+      : null;
     const current =
       picked || findSessionWorktree(worktrees, sessionPath) || worktrees[0];
     const currentKey = current ? `${current.repo}/${current.name}` : null;
@@ -1650,13 +1658,82 @@ export default function setup(pocket) {
         alive = false;
         clearInterval(timer);
       };
-    }, [currentKey, scope]);
+    }, [currentKey, scope, reloadTick]);
+
+    useEffect(
+      () => () => {
+        if (armedTimer.current) clearTimeout(armedTimer.current);
+      },
+      [],
+    );
+
+    // One write at a time. The answer is the list as timber reads the file
+    // afterwards, and a re-read follows it, so the panel shows the file and not
+    // what the write hoped it did.
+    const write = async (route, fields) => {
+      if (!current) return null;
+      setBusy(true);
+      setError(null);
+      try {
+        const answer = await pocket.api(
+          route,
+          { repo: current.repo, name: current.name, scope, ...fields },
+          { method: "POST" },
+        );
+        setList(answer);
+        return answer;
+      } catch (failure) {
+        setError(
+          failure && failure.message ? failure.message : "The write failed",
+        );
+        return null;
+      } finally {
+        setBusy(false);
+        setReloadTick((n) => n + 1);
+      }
+    };
+
+    const addTodo = async (event) => {
+      event.preventDefault();
+      const text = draft.trim();
+      if (!text || busy) return;
+      const answer = await write("todo-add", { text });
+      if (answer === null) return;
+      setDraft("");
+      if (draftInput.current) draftInput.current.focus();
+    };
+
+    const toggleTodo = (todo) => {
+      if (busy) return;
+      void write("todo-toggle", {
+        id: todo.id,
+        title: todo.title,
+        complete: !todo.complete,
+      });
+    };
+
+    // A removal takes two taps: the first arms it, and the second within 5 s
+    // drops the line. The ids are line numbers, so the title goes with them.
+    const removeTodo = (todo) => {
+      if (busy) return;
+      const key = `${todo.id}\0${todo.title}`;
+      if (armed !== key) {
+        setArmed(key);
+        if (armedTimer.current) clearTimeout(armedTimer.current);
+        armedTimer.current = setTimeout(() => setArmed(null), 5000);
+        return;
+      }
+      setArmed(null);
+      if (armedTimer.current) clearTimeout(armedTimer.current);
+      void write("todo-remove", { id: todo.id, title: todo.title });
+    };
 
     const scopeButton = (id, label) =>
       html`<button
         type="button"
         class=${scope === id ? "on" : ""}
         aria-pressed=${scope === id}
+        disabled=${busy}
         onClick=${() => setScope(id)}
       >
         ${label}
@@ -1700,6 +1777,7 @@ export default function setup(pocket) {
       <select
         aria-label="Worktree"
         value=${String(currentAt)}
+        disabled=${busy}
         onChange=${(e) => {
           const next = worktrees[Number(e.target.value)];
           setChosen(next ? { repo: next.repo, name: next.name } : null);
@@ -1713,6 +1791,29 @@ export default function setup(pocket) {
             </option>`,
         )}
       </select>
+      <form
+        onSubmit=${addTodo}
+        style=${{ display: "flex", gap: "6px", flex: "none" }}
+      >
+        <input
+          ref=${(el) => {
+            draftInput.current = el;
+          }}
+          value=${draft}
+          placeholder="Add a task"
+          aria-label="New task"
+          disabled=${busy}
+          onInput=${(e) => setDraft(e.target.value)}
+          style=${{ flex: "1", minWidth: "0" }}
+        />
+        <button
+          class="button primary"
+          type="submit"
+          disabled=${busy || !draft.trim()}
+        >
+          ${busy ? html`<${Spinner} label="Saving the task" />` : "Add"}
+        </button>
+      </form>
       <div
         style=${{ flex: "1", minHeight: "0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" }}
       >
@@ -1734,20 +1835,25 @@ export default function setup(pocket) {
         <ul
           style=${{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
         >
-          ${todos.map(
-            (todo) =>
-              html`<li
-                key=${`${todo.id}`}
-                style=${{ borderTop: "1px solid var(--line)", paddingLeft: `${todo.depth * 14}px` }}
+          ${todos.map((todo) => {
+            const removeKey = `${todo.id}\0${todo.title}`;
+            const armedRow = armed === removeKey;
+            return html`<li
+              key=${`${todo.id}`}
+              style=${{ borderTop: "1px solid var(--line)", paddingLeft: `${todo.depth * 14}px` }}
+            >
+              <div
+                style=${{ display: "flex", alignItems: "flex-start", gap: "4px" }}
               >
                 <label
-                  style=${{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "7px 0", minWidth: "0" }}
+                  style=${{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "7px 0", minWidth: "0", flex: "1" }}
                 >
                   <input
                     type="checkbox"
                     checked=${todo.complete}
-                    disabled
+                    disabled=${busy}
                     aria-label=${`${todo.complete ? "Done" : "Open"}: ${todo.title}`}
+                    onChange=${() => toggleTodo(todo)}
                     style=${{ flex: "none", width: "15px", height: "15px", margin: "2px 0 0", padding: "0", accentColor: "var(--accent)" }}
                   />
                   <span
@@ -1764,8 +1870,44 @@ export default function setup(pocket) {
                     >${todo.title}</span
                   >
                 </label>
-              </li>`,
-          )}
+                <button
+                  class="button small"
+                  type="button"
+                  disabled=${busy}
+                  title=${
+                    armedRow
+                      ? `Click again within 5s to remove ${todo.title}`
+                      : `Remove ${todo.title}`
+                  }
+                  aria-label=${
+                    armedRow
+                      ? `Confirm remove ${todo.title}`
+                      : `Remove ${todo.title}`
+                  }
+                  onClick=${() => removeTodo(todo)}
+                  style=${{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: "28px",
+                    height: "28px",
+                    marginTop: "3px",
+                    padding: armedRow ? "0 6px" : "0",
+                    flex: "none",
+                    fontSize: "12px",
+                    fontWeight: armedRow ? "700" : "400",
+                    color: armedRow ? "var(--err)" : "var(--muted)",
+                  }}
+                >
+                  ${
+                    armedRow
+                      ? "Remove?"
+                      : html`<${Icon} path=${TRASH_PATH} size=${14} />`
+                  }
+                </button>
+              </div>
+            </li>`;
+          })}
         </ul>
       </div>
       <div
