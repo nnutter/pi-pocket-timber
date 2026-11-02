@@ -1069,6 +1069,10 @@ export default function setup(pocket) {
             // worktree's folder, so it also finds PRs made outside this page,
             // in a session or on GitHub itself.
             const prUrl = (cachePr && cachePr.url) || null;
+            const repoUrl =
+              cachePr && cachePr.repo
+                ? `https://github.com/${cachePr.repo}`
+                : null;
             const prLabel =
               cachePr && cachePr.number !== undefined
                 ? `PR #${cachePr.number}`
@@ -1149,12 +1153,22 @@ export default function setup(pocket) {
                 <span style=${{ minWidth: "0", overflowWrap: "anywhere" }}>
                   <span title=${w.path}>${w.name}</span>
                   <span class="muted"> @ </span>
-                  <span
-                    class="muted"
-                    title=${w.upstream ? `Upstream: ${w.upstream}` : "No upstream"}
-                  >
-                    ${w.repo}
-                  </span>
+                  ${
+                    repoUrl
+                      ? html`<a
+                          class="muted"
+                          href=${repoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title=${repoUrl}
+                          >${w.repo}</a
+                        >`
+                      : html`<span
+                          class="muted"
+                          title=${w.upstream ? `Upstream: ${w.upstream}` : "No upstream"}
+                          >${w.repo}</span
+                        >`
+                  }
                 </span>
                 ${
                   // Right-aligned, so the link sits in the same place on every

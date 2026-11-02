@@ -50,6 +50,7 @@ Write the sidecar again after the files change: it records their hashes.
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
+- **Repository link**: the repository name in a row links to its page on GitHub, built from the worktree's `origin` remote; a worktree whose `origin` names no repository keeps the plain name
 - **PR link**: each row links its open pull request, right-aligned in the name row.
   The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open
 - **Action button**: one per row, chosen by what the row needs, and drawn only when it can act.
