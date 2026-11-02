@@ -1,6 +1,6 @@
 /**
  * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, archiving the sessions that worked in them, from a worktrees page, and from a panel on a wide screen.
- * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, and open-or-create PR per worktree.
+ * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, and open-or-create PR per worktree.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -71,6 +71,10 @@ let prCache: {
 } | null = null;
 let prRefreshing = false;
 const PR_CACHE_TTL = 60_000;
+
+// A row after an action changed its worktree: the worktree as timber lists it
+// now, and its PR and push state.
+type WorktreeState = { worktree: Worktree; pr: PrEntry };
 
 async function runCmd(
   cmd: string,
@@ -625,6 +629,31 @@ async function readPushAndPr(w: Worktree): Promise<{
   };
 }
 
+// A row's state after something changed its worktree: the worktree as timber
+// lists it now, and its PR and push state. Only this row is read, and its cached
+// entry is dropped first, so a read that fails cannot leave an entry that the
+// action has just made wrong.
+async function refreshWorktreeState(
+  repo: string,
+  name: string,
+): Promise<WorktreeState | null> {
+  const key = `${repo}\0${name}`;
+  if (prCache) {
+    const map = { ...prCache.map };
+    delete map[key];
+    prCache = { at: prCache.at, map };
+  }
+  const listing = await readListing();
+  const found = listing.worktrees.find(
+    (w) => w.repo === repo && w.name === name,
+  );
+  if (!found) return null;
+  const { pr, push, repo: origin } = await readPushAndPr(found);
+  const entry: PrEntry = { ...(pr ? prEntry(pr, push) : push), repo: origin };
+  prCache = { at: Date.now(), map: { ...(prCache?.map ?? {}), [key]: entry } };
+  return { worktree: found, pr: entry };
+}
+
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
 // URL names no repository on GitHub.
 function repoFromRemoteUrl(url: string): string | null {
@@ -1155,24 +1184,11 @@ export default function createTimber(host: unknown, web: Web) {
         // holds the real draft and check state; `openOrCreatePr` has already
         // seen the PR with `gh pr view`, so the read finds it again.
         try {
-          const listing = await readListing();
-          const found = listing.worktrees.find(
-            (w) => w.repo === repo && w.name === name,
-          );
-          if (found) {
-            const { key, pr, push, repo } = await readPushAndPr(found);
-            prCache = {
-              at: Date.now(),
-              map: {
-                ...(prCache?.map ?? {}),
-                [key]: { ...(pr ? prEntry(pr, push) : push), repo },
-              },
-            };
-            try {
-              web.send("fetched", { at: prCache.at });
-            } catch {
-              // Tabs may be gone; the next poll picks up the listing.
-            }
+          await refreshWorktreeState(repo, name);
+          try {
+            web.send("fetched", { at: Date.now() });
+          } catch {
+            // Tabs may be gone; the next poll picks up the listing.
           }
         } catch {
           // Warming is best-effort; the background refresh covers it.
@@ -1242,7 +1258,13 @@ export default function createTimber(host: unknown, web: Web) {
   web.route(
     "POST",
     "merge",
-    async ({ body }): Promise<{ merged: number; url: string }> => {
+    async ({
+      body,
+    }): Promise<{
+      merged: number;
+      url: string;
+      state: WorktreeState | null;
+    }> => {
       try {
         const repo = typeof body["repo"] === "string" ? body["repo"] : "";
         const name = typeof body["name"] === "string" ? body["name"] : "";
@@ -1303,8 +1325,19 @@ export default function createTimber(host: unknown, web: Web) {
             merged.stderr.trim() || `gh pr merge failed (exit ${merged.code})`,
           );
         }
-        prCache = null;
-        return { merged: pr.number, url: pr.url };
+        // Refresh this row and no other. The repository's own fetch is what lets
+        // timber call the branch merged, since the base branch holds it on the
+        // remote now; it is one fetch of one repository, not a pass over every
+        // worktree. Without it the row reads Merged on the periodic fetch.
+        await runTimber(["git", `@${repo}`, "--", "fetch"]);
+        let state: WorktreeState | null = null;
+        try {
+          state = await refreshWorktreeState(repo, name);
+        } catch {
+          // The row's cached entry stays dropped, so it cannot offer this merged
+          // PR again. The next state poll reads it fresh.
+        }
+        return { merged: pr.number, url: pr.url, state };
       } catch (error) {
         if (error instanceof Error && "status" in error) throw error;
         const message = error instanceof Error ? error.message : "merge failed";

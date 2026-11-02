@@ -88,6 +88,23 @@ export default function setup(pocket) {
     return `${verb}\0${rowKey(w)}`;
   }
 
+  /**
+   * The state's listing with one worktree's row replaced by what the server read
+   * after an action changed it. No other row is touched, so an action refreshes
+   * its own row and leaves the rest of the list as it was.
+   */
+  function withWorktreeState(state, fresh) {
+    if (!state || !fresh || !fresh.worktree) return state;
+    const key = rowKey(fresh.worktree);
+    return {
+      ...state,
+      worktrees: state.worktrees.map((w) =>
+        rowKey(w) === key ? fresh.worktree : w,
+      ),
+      prs: { ...(state.prs || {}), [key]: fresh.pr },
+    };
+  }
+
   /** The verbs whose ids name one worktree's row actions. */
   const ROW_VERBS = ["open", "pr", "push", "merge", "remove"];
 
@@ -618,8 +635,10 @@ export default function setup(pocket) {
           { method: "POST" },
         );
         setNotice(`Merged PR #${result.merged}.`);
-        const state = await pocket.api("state");
-        setData(state);
+        // The server read this row again after the merge, so its button shows
+        // what it can do now: delete, once the branch is merged. Every other
+        // row keeps what it had.
+        setData((previous) => withWorktreeState(previous, result.state));
         setError(null);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Merge failed");
