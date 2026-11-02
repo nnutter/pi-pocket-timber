@@ -947,6 +947,125 @@ async function removeWorktree(
   return { removed: `${name}@${repo}` };
 }
 
+// Which list a worktree has: its own, or the one that its repository shares
+// with every worktree of that repository.
+type TodoScope = "worktree" | "repo";
+
+function isTodoScope(value: unknown): value is TodoScope {
+  return value === "worktree" || value === "repo";
+}
+
+// One Markdown checkbox of a TODO list. `id` is its 1-based line number in the
+// file, and `depth` is how far it nests under the items above it.
+type TodoItem = {
+  id: number;
+  title: string;
+  complete: boolean;
+  depth: number;
+};
+
+type TodoList = {
+  scope: TodoScope;
+  summary: { incomplete: number; complete: number };
+  todos: TodoItem[];
+};
+
+// The arguments that name one TODO list: the positional worktree selector,
+// and the flag for the repository's shared list. `timber todo` resolves both
+// the worktree and the file, so nothing here guesses a path.
+function todoArgs(repo: string, name: string, scope: TodoScope): string[] {
+  checkRepoName(repo);
+  checkBranchName(name, "worktree name");
+  const argv = ["todo", `${name}@${repo}`];
+  if (scope === "repo") argv.push("--repo");
+  return argv;
+}
+
+// What timber says when it fails: its error panel is several lines of padding
+// around one sentence, so the lines become one.
+function cliMessage(
+  result: { stdout: string; stderr: string; code: number },
+  fallback: string,
+): string {
+  const text = [result.stderr, result.stdout]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join(" ");
+  const one = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ");
+  return (one || fallback).slice(0, 400);
+}
+
+// The error of a `timber todo` call. A repository list needs timber 0.22.0,
+// which added `--repo`: an older timber answers with an unknown flag, and that
+// is worth naming, because the person can install the newer one.
+function todoFailure(
+  result: { stdout: string; stderr: string; code: number },
+  fallback: string,
+): Error {
+  const message = cliMessage(result, fallback);
+  if (/unknown flag/i.test(message) && /repo/i.test(message)) {
+    return new Error(
+      "Repository TODOs need timber 0.22.0 or newer; upgrade timber, then refresh.",
+    );
+  }
+  return new Error(message);
+}
+
+// The `timber todo --json` document, with each item's depth resolved from the
+// id of the item that it nests under.
+function parseTodoList(scope: TodoScope, stdout: string): TodoList {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error("timber todo --json printed no JSON");
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed["todos"])) {
+    throw new Error("timber todo --json returned an unexpected shape");
+  }
+  const counts = isRecord(parsed["summary"]) ? parsed["summary"] : {};
+  const summary = {
+    incomplete:
+      typeof counts["incomplete"] === "number" ? counts["incomplete"] : 0,
+    complete: typeof counts["complete"] === "number" ? counts["complete"] : 0,
+  };
+  // An item nests under the nearest earlier item with less indentation, so
+  // its depth is one more than its parent's. Parents come first in the file.
+  const depths = new Map<number, number>();
+  const todos: TodoItem[] = [];
+  for (const entry of parsed["todos"]) {
+    if (!isRecord(entry)) continue;
+    const id = entry["id"];
+    const title = entry["title"];
+    if (typeof id !== "number" || typeof title !== "string") continue;
+    const parent = entry["depends_on"];
+    const depth =
+      typeof parent !== "number"
+        ? 0
+        : Math.min((depths.get(parent) ?? 0) + 1, 8);
+    depths.set(id, depth);
+    todos.push({ id, title, complete: entry["complete"] === true, depth });
+  }
+  return { scope, summary, todos };
+}
+
+// One worktree's TODO list, or its repository's, as timber reads it.
+async function readTodoList(
+  repo: string,
+  name: string,
+  scope: TodoScope,
+): Promise<TodoList> {
+  const result = await runTimber([...todoArgs(repo, name, scope), "--json"]);
+  if (result.code !== 0) {
+    throw todoFailure(result, `timber todo failed (exit ${result.code})`);
+  }
+  return parseTodoList(scope, result.stdout);
+}
+
 const timberList = defineTool({
   name: "timber_list",
   description:
@@ -1434,6 +1553,35 @@ export default function createTimber(host: unknown, web: Web) {
       };
     },
   );
+
+  // A TODO failure as the status that the panel shows. What the person can
+  // fix is theirs; the rest is timber's own report.
+  const todoRouteError = (error: unknown): never => {
+    const message = error instanceof Error ? error.message : "TODO failed";
+    if (/unknown worktree|not found/i.test(message)) {
+      throw web.error(404, message);
+    }
+    if (/needs timber|invalid|is empty|control characters/i.test(message)) {
+      throw web.error(422, message);
+    }
+    throw web.error(502, message);
+  };
+
+  // One worktree's TODO list, or its repository's: the items, their nesting,
+  // and the count of the two states.
+  web.route("GET", "todo", async (request): Promise<TodoList> => {
+    const repo = (request.query.get("repo") ?? "").trim();
+    const name = (request.query.get("name") ?? "").trim();
+    const scope = request.query.get("scope") ?? "worktree";
+    if (!isTodoScope(scope)) {
+      throw web.error(400, "scope is worktree or repo");
+    }
+    try {
+      return await readTodoList(repo, name, scope);
+    } catch (error) {
+      return todoRouteError(error);
+    }
+  });
 
   web.route(
     "POST",
