@@ -1,8 +1,9 @@
 /**
- * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, archiving the sessions that worked in them, from a worktrees page, and from a panel on a wide screen.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, and open-or-create PR per worktree.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages, and from panels on a wide screen.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, and the TODO files that `timber todo --path` and `--repo` resolve.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -947,6 +948,273 @@ async function removeWorktree(
   return { removed: `${name}@${repo}` };
 }
 
+// Which list a worktree has: its own, or the one that its repository shares
+// with every worktree of that repository.
+type TodoScope = "worktree" | "repo";
+
+function isTodoScope(value: unknown): value is TodoScope {
+  return value === "worktree" || value === "repo";
+}
+
+// One Markdown checkbox of a TODO list. `id` is its 1-based line number in the
+// file, and `depth` is how far it nests under the items above it.
+type TodoItem = {
+  id: number;
+  title: string;
+  complete: boolean;
+  depth: number;
+};
+
+type TodoList = {
+  scope: TodoScope;
+  summary: { incomplete: number; complete: number };
+  todos: TodoItem[];
+};
+
+// The arguments that name one TODO list: the positional worktree selector,
+// and the flag for the repository's shared list. `timber todo` resolves both
+// the worktree and the file, so nothing here guesses a path.
+function todoArgs(repo: string, name: string, scope: TodoScope): string[] {
+  checkRepoName(repo);
+  checkBranchName(name, "worktree name");
+  const argv = ["todo", `${name}@${repo}`];
+  if (scope === "repo") argv.push("--repo");
+  return argv;
+}
+
+// What timber says when it fails: its error panel is several lines of padding
+// around one sentence, so the lines become one.
+function cliMessage(
+  result: { stdout: string; stderr: string; code: number },
+  fallback: string,
+): string {
+  const text = [result.stderr, result.stdout]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join(" ");
+  const one = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ");
+  return (one || fallback).slice(0, 400);
+}
+
+// The error of a `timber todo` call. A repository list needs timber 0.22.0,
+// which added `--repo`: an older timber answers with an unknown flag, and that
+// is worth naming, because the person can install the newer one.
+function todoFailure(
+  result: { stdout: string; stderr: string; code: number },
+  fallback: string,
+): Error {
+  const message = cliMessage(result, fallback);
+  if (/unknown flag/i.test(message) && /repo/i.test(message)) {
+    return new Error(
+      "Repository TODOs need timber 0.22.0 or newer; upgrade timber, then refresh.",
+    );
+  }
+  return new Error(message);
+}
+
+// The `timber todo --json` document, with each item's depth resolved from the
+// id of the item that it nests under.
+function parseTodoList(scope: TodoScope, stdout: string): TodoList {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error("timber todo --json printed no JSON");
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed["todos"])) {
+    throw new Error("timber todo --json returned an unexpected shape");
+  }
+  const counts = isRecord(parsed["summary"]) ? parsed["summary"] : {};
+  const summary = {
+    incomplete:
+      typeof counts["incomplete"] === "number" ? counts["incomplete"] : 0,
+    complete: typeof counts["complete"] === "number" ? counts["complete"] : 0,
+  };
+  // An item nests under the nearest earlier item with less indentation, so
+  // its depth is one more than its parent's. Parents come first in the file.
+  const depths = new Map<number, number>();
+  const todos: TodoItem[] = [];
+  for (const entry of parsed["todos"]) {
+    if (!isRecord(entry)) continue;
+    const id = entry["id"];
+    const title = entry["title"];
+    if (typeof id !== "number" || typeof title !== "string") continue;
+    const parent = entry["depends_on"];
+    const depth =
+      typeof parent !== "number"
+        ? 0
+        : Math.min((depths.get(parent) ?? 0) + 1, 8);
+    depths.set(id, depth);
+    todos.push({ id, title, complete: entry["complete"] === true, depth });
+  }
+  return { scope, summary, todos };
+}
+
+// One worktree's TODO list, or its repository's, as timber reads it.
+async function readTodoList(
+  repo: string,
+  name: string,
+  scope: TodoScope,
+): Promise<TodoList> {
+  const result = await runTimber([...todoArgs(repo, name, scope), "--json"]);
+  if (result.code !== 0) {
+    throw todoFailure(result, `timber todo failed (exit ${result.code})`);
+  }
+  return parseTodoList(scope, result.stdout);
+}
+
+// The scope that a request asked for. Anything else is the caller's mistake,
+// not a list that this module can pick.
+function todoScopeOf(value: unknown): TodoScope {
+  if (!isTodoScope(value)) {
+    throw new Error("Invalid scope: use worktree or repo.");
+  }
+  return value;
+}
+
+// One item's text, as a person typed it: one line, and not empty. A newline
+// would end the item and start a line that is not a checkbox.
+function checkTodoTitle(value: unknown): string {
+  const title = typeof value === "string" ? value.trim() : "";
+  if (title === "") throw new Error("Invalid TODO: the text is empty.");
+  if (title.length > 500) {
+    throw new Error("Invalid TODO: the text is longer than 500 characters.");
+  }
+  const control = [...title].some((c) => {
+    const code = c.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (control)
+    throw new Error("Invalid TODO: the text has control characters.");
+  return title;
+}
+
+// The line number and the text that name one item that is already in the
+// file. The title is what the panel read there, so a write can tell that the
+// line still holds that item.
+function todoTarget(body: Record<string, unknown>): {
+  id: number;
+  title: string;
+} {
+  const id = body["id"];
+  const title = body["title"];
+  if (typeof id !== "number" || !Number.isInteger(id) || id < 1) {
+    throw new Error("Invalid TODO: the line is unknown.");
+  }
+  if (typeof title !== "string") {
+    throw new Error("Invalid TODO: the text is unknown.");
+  }
+  return { id, title };
+}
+
+// One checkbox line of a TODO file, by the rules that timber counts items
+// with: a `- ` bullet, then `[ ]`, `[x]`, or `[X]`.
+function parseCheckboxLine(
+  line: string,
+): { complete: boolean; title: string } | null {
+  const item = line.trim();
+  if (!item.startsWith("- ")) return null;
+  const rest = item.slice(2);
+  if (rest.startsWith("[ ]")) {
+    return { complete: false, title: rest.slice(3).trim() };
+  }
+  if (rest.startsWith("[x]") || rest.startsWith("[X]")) {
+    return { complete: true, title: rest.slice(3).trim() };
+  }
+  return null;
+}
+
+// The line of the item with this id, when it still holds the title that the
+// panel read. A file that changed since then is reported, not guessed at: the
+// ids are line numbers, and a line that moved would change the wrong item.
+function todoLineAt(lines: string[], id: number, title: string): number {
+  const at = id - 1;
+  const line = at >= 0 && at < lines.length ? lines[at] : undefined;
+  const parsed = typeof line === "string" ? parseCheckboxLine(line) : null;
+  if (parsed === null || parsed.title !== title) {
+    throw new Error("The TODO list changed; it is refreshed, so try again.");
+  }
+  return at;
+}
+
+// The file of one TODO list. A write needs it, and only timber resolves it:
+// the path of a worktree's list is not its checkout's.
+async function todoPath(
+  repo: string,
+  name: string,
+  scope: TodoScope,
+): Promise<string> {
+  const result = await runTimber([...todoArgs(repo, name, scope), "--path"]);
+  const path = result.stdout.trim();
+  if (result.code !== 0 || path === "") {
+    throw todoFailure(
+      result,
+      `timber todo --path failed (exit ${result.code})`,
+    );
+  }
+  return path;
+}
+
+// Read the list, change the lines that hold its items, and write it back. The
+// read and the write share one turn, so two taps cannot land on a file that
+// one of them has already moved.
+function editTodoFile(path: string, edit: (lines: string[]) => void): void {
+  const lines = readFileSync(path, "utf8").split("\n");
+  edit(lines);
+  writeFileSync(path, lines.join("\n"), "utf8");
+}
+
+// Append one open item after the list's last item, before any blank lines
+// that follow it.
+function addTodoLine(path: string, title: string): void {
+  editTodoFile(path, (lines) => {
+    let at = lines.length;
+    while (at > 0 && (lines[at - 1] ?? "").trim() === "") at -= 1;
+    lines.splice(at, 0, `- [ ] ${title}`);
+  });
+}
+
+// Mark one item done or open, keeping the rest of its line as it is.
+function toggleTodoLine(
+  path: string,
+  id: number,
+  title: string,
+  complete: boolean,
+): void {
+  editTodoFile(path, (lines) => {
+    const at = todoLineAt(lines, id, title);
+    lines[at] = (lines[at] ?? "").replace(
+      /^(\s*-\s+)\[[ xX]\]/,
+      (_whole, lead: string) => `${lead}[${complete ? "x" : " "}]`,
+    );
+  });
+}
+
+// Drop one item's line. The file keeps every other line, including items that
+// are already done.
+function removeTodoLine(path: string, id: number, title: string): void {
+  editTodoFile(path, (lines) => {
+    lines.splice(todoLineAt(lines, id, title), 1);
+  });
+}
+
+// One change to a list, then the list as timber reads it afterwards, so the
+// panel shows what the file now holds.
+async function editTodoList(
+  repo: string,
+  name: string,
+  scope: TodoScope,
+  edit: (path: string) => void,
+): Promise<TodoList> {
+  const path = await todoPath(repo, name, scope);
+  edit(path);
+  return readTodoList(repo, name, scope);
+}
+
 const timberList = defineTool({
   name: "timber_list",
   description:
@@ -1434,6 +1702,89 @@ export default function createTimber(host: unknown, web: Web) {
       };
     },
   );
+
+  // A TODO failure as the status that the panel shows. What the person can
+  // fix is theirs; the rest is timber's own report.
+  const todoRouteError = (error: unknown): never => {
+    const message = error instanceof Error ? error.message : "TODO failed";
+    if (/unknown worktree|not found/i.test(message)) {
+      throw web.error(404, message);
+    }
+    if (/changed/i.test(message)) {
+      throw web.error(409, message);
+    }
+    if (/needs timber|invalid|is empty|control characters/i.test(message)) {
+      throw web.error(422, message);
+    }
+    throw web.error(502, message);
+  };
+
+  // One worktree's TODO list, or its repository's: the items, their nesting,
+  // and the count of the two states.
+  web.route("GET", "todo", async (request): Promise<TodoList> => {
+    const repo = (request.query.get("repo") ?? "").trim();
+    const name = (request.query.get("name") ?? "").trim();
+    const scope = request.query.get("scope") ?? "worktree";
+    if (!isTodoScope(scope)) {
+      throw web.error(400, "scope is worktree or repo");
+    }
+    try {
+      return await readTodoList(repo, name, scope);
+    } catch (error) {
+      return todoRouteError(error);
+    }
+  });
+
+  // POST todo-add: append one open item to the list, and answer with the list
+  // as timber reads it now.
+  web.route("POST", "todo-add", async ({ body }): Promise<TodoList> => {
+    try {
+      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const scope = todoScopeOf(body["scope"]);
+      const title = checkTodoTitle(body["text"]);
+      return await editTodoList(repo, name, scope, (path) => {
+        addTodoLine(path, title);
+      });
+    } catch (error) {
+      return todoRouteError(error);
+    }
+  });
+
+  // POST todo-toggle: mark one item done, or open again.
+  web.route("POST", "todo-toggle", async ({ body }): Promise<TodoList> => {
+    try {
+      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const scope = todoScopeOf(body["scope"]);
+      const target = todoTarget(body);
+      return await editTodoList(repo, name, scope, (path) => {
+        toggleTodoLine(
+          path,
+          target.id,
+          target.title,
+          body["complete"] === true,
+        );
+      });
+    } catch (error) {
+      return todoRouteError(error);
+    }
+  });
+
+  // POST todo-remove: drop one item's line.
+  web.route("POST", "todo-remove", async ({ body }): Promise<TodoList> => {
+    try {
+      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const scope = todoScopeOf(body["scope"]);
+      const target = todoTarget(body);
+      return await editTodoList(repo, name, scope, (path) => {
+        removeTodoLine(path, target.id, target.title);
+      });
+    } catch (error) {
+      return todoRouteError(error);
+    }
+  });
 
   web.route(
     "POST",

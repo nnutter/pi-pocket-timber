@@ -1,13 +1,14 @@
 # pi-pocket-timber
 
 A [Pi Pocket](https://github.com/TannerMidd/pi-pocket) drop-in for
-[Timber](https://github.com/nnutter/timber) worktrees: list, create, open sessions in, and safely remove managed Git worktrees from a worktrees page, and from a panel on a wide screen.
+[Timber](https://github.com/nnutter/timber) worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository.
+Both have a page, and a panel on a wide screen.
 
 Wraps the `timber` CLI on the server (with `gh` for pull requests).
 
 ## Requirements
 
-- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`)
+- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`, and `timber todo --repo` for the repository's TODO list; an older timber shows the worktree's list and says why the other one is missing)
 - [`gh`](https://cli.github.com/) signed in, to read and merge pull requests (`gh auth login`)
 - `git` (for the worktree's commits and push state)
 - Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts).
@@ -47,6 +48,9 @@ Write the sidecar again after the files change: it records their hashes.
   The worktree the session works in stays first, marked with an accent stripe, whatever the search and the sort say.
   A row's status is one line: the session button, then the TODO and review counts beside it, then the commit count next to the one action button; a count of zero is left out.
   The button's color says what it will do: periwinkle removes, green merges or acts on a clean worktree, amber is a dirty worktree or checks still running, red is a failed check run or a branch that must be synced first
+- **TODOs page** (rail + launcher), and a panel on a wide screen: the tasks of the worktree the session works in, with a picker for another worktree and a toggle for the list that its repository shares with every worktree of that repository.
+  A task is added in one field, ticked to done, or removed with two taps; nested tasks stay indented, and done tasks are struck through.
+  The items are the Markdown checkboxes of the worktree's `TODO.md`, or of the repository's `TODO.repo.md`: both live in the Git directory, not in the checkout, and `timber todo --path` and `timber todo --repo --path` resolve them.
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
@@ -71,6 +75,9 @@ Write the sidecar again after the files change: it records their hashes.
   The page archives them as the signed-in person; a failure to archive leaves the removal done, and the notice says so.
 - `timber pr create` names the base repository and branch from the branch's upstream, and refuses a branch GitHub does not have, with the push command to run.
   It never pushes, and it never changes the branch's upstream, so the extension removes neither; creating a PR no longer edits git config.
+- A TODO write changes one line of its file: it appends one `- [ ]` line, rewrites one marker, or drops one line.
+  An item is named by its line number and its text, so a file that changed under the panel is refused until the panel reads it again.
+- Removing a done task is possible here, although the `timber-todo` skill tells Pi to keep them; every other line of the file stays as it is.
 - The module shells out to `timber`, `gh`, and `git` as described above, and reads nothing else off the machine.
 
 ## License

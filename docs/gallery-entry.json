@@ -1,28 +1,28 @@
 {
   "name": "timber",
   "title": "Timber",
-  "description": "Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, from a side panel.",
-  "tags": ["git", "worktree", "pull-request", "review"],
+  "description": "Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages and panels.",
+  "tags": ["git", "worktree", "pull-request", "review", "todo"],
   "author": {
     "name": "Nathan Nutter",
     "github": "nnutter"
   },
-  "version": "1.0.0",
+  "version": "1.1.1",
   "source": {
     "repo": "nnutter/pi-pocket-timber",
-    "commit": "c65bd15d5faa52f34ce559c383722e5bd5e04f5a",
+    "commit": "583c6da7d404a10356a0a8be84ed5063d4605556",
     "path": "extensions"
   },
   "files": [
     {
       "name": "timber.ts",
-      "sha256": "ae2f4d2a10b7d385f1819f2f9dc1ed265f31c6f7c0d3791d0fcea2d1e2a5ef70",
-      "size": 44608
+      "sha256": "202f3e3f27ff9e5bbacb58229db6eaea96819674ae5b1d3a542deb4ee0fd32ed",
+      "size": 65893
     },
     {
       "name": "timber/index.js",
-      "sha256": "4c3a839ceb4599cb2603ad5ef26cf40b7ec55da67f235a13a9e0e434d7d5efdb",
-      "size": 56409
+      "sha256": "4d9a1060f88a25ec36afda1f1cd0497ebdba7c00efe0f9f79347105c0b13b1cf",
+      "size": 77597
     }
   ],
   "pocketApi": 2,
@@ -42,6 +42,9 @@
     "wraps": [],
     "routes": [
       "GET state",
+      "GET folder",
+      "GET sessions",
+      "GET todo",
       "POST fetch",
       "POST create",
       "POST repositories",
@@ -49,6 +52,9 @@
       "POST push",
       "POST merge",
       "POST remove",
+      "POST todo-add",
+      "POST todo-toggle",
+      "POST todo-remove",
       "POST pr-draft/:source"
     ],
     "client": "owner",

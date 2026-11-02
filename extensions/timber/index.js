@@ -12,6 +12,13 @@ export default function setup(pocket) {
   const TIMBER_ICON =
     "M5 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 8v2.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V8M12 12v4";
 
+  // The TODO icon: a checklist, for the rail button and the panel's button.
+  const TODO_ICON = "M4 4h16v16H4zM8.5 12l2.5 2.5L16 9";
+
+  /** The trash path of a removal button in a worktree row. */
+  const TRASH_PATH =
+    "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6";
+
   // Status items in a worktree row share the 24px height of the row buttons.
   const ROW_ITEM = {
     display: "inline-flex",
@@ -80,16 +87,6 @@ export default function setup(pocket) {
     return `color-mix(in srgb, ${color} 78%, var(--bg))`;
   }
 
-  /** The key that names one worktree's row, in the state's PR map and its ids. */
-  function rowKey(w) {
-    return `${w.repo}\0${w.name}`;
-  }
-
-  /** The action id for a verb on one worktree row. */
-  function rowAction(verb, w) {
-    return `${verb}\0${rowKey(w)}`;
-  }
-
   /**
    * The state's listing with one worktree's row replaced by what the server read
    * after an action changed it. No other row is touched, so an action refreshes
@@ -139,6 +136,55 @@ export default function setup(pocket) {
     return payload;
   }
 
+  // The folder of the session this tab shows, or null. What the tab shows is
+  // put first by the page and by the TODOs panel, and neither can read the
+  // folder itself: the server answers it.
+  function useSessionPath() {
+    const [sessionPath, setSessionPath] = useState(null);
+    useEffect(() => {
+      let alive = true;
+      const readFolder = (id) => {
+        if (id === null) {
+          if (alive) setSessionPath(null);
+          return;
+        }
+        void pocket
+          .api(`folder?session=${id}`)
+          .then((answer) => {
+            if (alive) setSessionPath((answer && answer.path) || null);
+          })
+          .catch(() => {
+            if (alive) setSessionPath(null);
+          });
+      };
+      readFolder(pocket.conversationId());
+      const stop =
+        typeof pocket.onConversation === "function"
+          ? pocket.onConversation((id) => readFolder(id))
+          : () => undefined;
+      return () => {
+        alive = false;
+        stop();
+      };
+    }, []);
+    return sessionPath;
+  }
+
+  // The worktree a session works in: its own folder, or the deepest worktree
+  // folder that holds the session's, since a session can start below a
+  // worktree's root. Null when the session works somewhere else.
+  function findSessionWorktree(worktrees, sessionPath) {
+    if (!sessionPath) return null;
+    let best = null;
+    for (const w of worktrees) {
+      const root = (w.path || "").replace(/\/+$/, "");
+      if (!root) continue;
+      if (sessionPath !== root && !sessionPath.startsWith(`${root}/`)) continue;
+      if (!best || root.length > best.root) best = { root: root.length, w };
+    }
+    return best ? best.w : null;
+  }
+
   function TimberPage() {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
@@ -166,7 +212,7 @@ export default function setup(pocket) {
     const [search, setSearch] = useState("");
     // The folder of the session this tab shows, or null. The pin needs it and
     // the page cannot read it, so the server answers it.
-    const [sessionPath, setSessionPath] = useState(null);
+    const sessionPath = useSessionPath();
     const [sort, setSort] = useState("recent");
     const [creating, setCreating] = useState(false);
     const [adding, setAdding] = useState(false);
@@ -258,33 +304,6 @@ export default function setup(pocket) {
       if (m < 60) return `${m}m ago`;
       return `${Math.floor(m / 60)}h ago`;
     };
-
-    useEffect(() => {
-      let alive = true;
-      const readFolder = (id) => {
-        if (id === null) {
-          if (alive) setSessionPath(null);
-          return;
-        }
-        void pocket
-          .api(`folder?session=${id}`)
-          .then((answer) => {
-            if (alive) setSessionPath((answer && answer.path) || null);
-          })
-          .catch(() => {
-            if (alive) setSessionPath(null);
-          });
-      };
-      readFolder(pocket.conversationId());
-      const stop =
-        typeof pocket.onConversation === "function"
-          ? pocket.onConversation((id) => readFolder(id))
-          : () => undefined;
-      return () => {
-        alive = false;
-        stop();
-      };
-    }, []);
 
     useEffect(() => {
       let alive = true;
@@ -645,27 +664,10 @@ export default function setup(pocket) {
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
 
-    // The worktree the session this tab shows works in: its own folder, or the
-    // deepest worktree folder that holds the session's, since a session can
-    // start below a worktree's root. Null when this tab shows no session, or
-    // one that works somewhere else.
-    const pinnedKey = (() => {
-      if (!sessionPath) return null;
-      let best = null;
-      for (const w of worktrees) {
-        const root = (w.path || "").replace(/\/+$/, "");
-        if (!root) continue;
-        if (sessionPath !== root && !sessionPath.startsWith(`${root}/`)) {
-          continue;
-        }
-        if (!best || root.length > best.length) {
-          best = { length: root.length, key: rowKey(w) };
-        }
-      }
-      return best ? best.key : null;
-    })();
-    const pinned =
-      (pinnedKey && worktrees.find((w) => rowKey(w) === pinnedKey)) || null;
+    // The worktree the session this tab shows works in. Null when this tab
+    // shows no session, or one that works somewhere else.
+    const pinned = findSessionWorktree(worktrees, sessionPath);
+    const pinnedKey = pinned ? rowKey(pinned) : null;
 
     const filtered = worktrees
       .filter((w) => {
@@ -1261,7 +1263,7 @@ export default function setup(pocket) {
                       }}
                       style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
-                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
+                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path=${TRASH_PATH} size=${16} />`)}
                     </button>`
                   }
                   ${
@@ -1544,6 +1546,397 @@ export default function setup(pocket) {
     </section>`;
   }
 
+  /**
+   * The TODO list of one worktree, or of the list that its repository shares
+   * with every worktree of that repository. The file is Markdown checkboxes;
+   * timber resolves it, and the server edits one line at a time.
+   */
+  function TodoPanel() {
+    const sessionPath = useSessionPath();
+    // The listing, for the worktrees to choose from. Its pull request cache is
+    // not read here, so a panel that only shows TODOs costs no `gh` call.
+    const [listing, setListing] = useState(null);
+    const [listingError, setListingError] = useState(null);
+    // The worktree that the person chose in the picker, or null to follow the
+    // session. It goes back to null when the tab shows another session.
+    const [chosen, setChosen] = useState(null);
+    const [scope, setScope] = useState("worktree");
+    const [list, setList] = useState(null);
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+    // The text of the item being added, and the id and text of the item whose
+    // removal is armed: its next tap removes it, as in the worktree rows.
+    const [draft, setDraft] = useState("");
+    const [armed, setArmed] = useState(null);
+    // A write locks the list that it writes to, so a tap cannot land on a list
+    // that the answer is about to replace.
+    const [busy, setBusy] = useState(false);
+    // Reading again after a write: the file is the truth, so every change
+    // re-reads it, and the poll restarts with the new list.
+    const [reloadTick, setReloadTick] = useState(0);
+    const readRun = useRef(0);
+    const lastSessionPath = useRef(null);
+    const draftInput = useRef(null);
+    const armedTimer = useRef(null);
+
+    useEffect(() => {
+      let alive = true;
+      const load = async () => {
+        try {
+          const state = await pocket.api("state");
+          if (!alive) return;
+          setListing(state);
+          setListingError(null);
+        } catch (failure) {
+          if (!alive) return;
+          setListingError(
+            failure && failure.message ? failure.message : "Timber failed",
+          );
+        }
+      };
+      void load();
+      const timer = setInterval(() => {
+        void load();
+      }, 15000);
+      return () => {
+        alive = false;
+        clearInterval(timer);
+      };
+    }, []);
+
+    useEffect(() => {
+      if (
+        lastSessionPath.current !== null &&
+        lastSessionPath.current !== sessionPath
+      ) {
+        setChosen(null);
+      }
+      lastSessionPath.current = sessionPath;
+    }, [sessionPath]);
+
+    const worktrees = (listing && listing.worktrees) || [];
+    // The chosen worktree, or the session's, or the first one. The picker holds
+    // the worktree's place in this list, so the row's ids stay out of the DOM.
+    const picked = chosen
+      ? worktrees.find((w) => w.repo === chosen.repo && w.name === chosen.name)
+      : null;
+    const current =
+      picked || findSessionWorktree(worktrees, sessionPath) || worktrees[0];
+    const currentKey = current ? `${current.repo}/${current.name}` : null;
+    const currentAt = current ? worktrees.indexOf(current) : -1;
+
+    // Read the list when the worktree or the scope changes, and again every
+    // 15 s: a session may write TODO.md while the panel is open.
+    useEffect(() => {
+      if (!currentKey || !current) return undefined;
+      const run = ++readRun.current;
+      let alive = true;
+      const load = async () => {
+        try {
+          const answer = await pocket.api(
+            `todo?repo=${encodeURIComponent(current.repo)}&name=${encodeURIComponent(current.name)}&scope=${scope}`,
+          );
+          if (!alive || run !== readRun.current) return;
+          setList(answer);
+          setError(null);
+        } catch (failure) {
+          if (!alive || run !== readRun.current) return;
+          setList(null);
+          setError(
+            failure && failure.message ? failure.message : "TODO failed",
+          );
+        }
+      };
+      setLoading(true);
+      void load().finally(() => {
+        if (alive && run === readRun.current) setLoading(false);
+      });
+      const timer = setInterval(() => {
+        void load();
+      }, 15000);
+      return () => {
+        alive = false;
+        clearInterval(timer);
+      };
+    }, [currentKey, scope, reloadTick]);
+
+    useEffect(
+      () => () => {
+        if (armedTimer.current) clearTimeout(armedTimer.current);
+      },
+      [],
+    );
+
+    // One write at a time. The answer is the list as timber reads the file
+    // afterwards, and a re-read follows it, so the panel shows the file and not
+    // what the write hoped it did.
+    const write = async (route, fields) => {
+      if (!current) return null;
+      setBusy(true);
+      setError(null);
+      try {
+        const answer = await pocket.api(
+          route,
+          { repo: current.repo, name: current.name, scope, ...fields },
+          { method: "POST" },
+        );
+        setList(answer);
+        return answer;
+      } catch (failure) {
+        setError(
+          failure && failure.message ? failure.message : "The write failed",
+        );
+        return null;
+      } finally {
+        setBusy(false);
+        setReloadTick((n) => n + 1);
+      }
+    };
+
+    const addTodo = async (event) => {
+      event.preventDefault();
+      const text = draft.trim();
+      if (!text || busy) return;
+      const answer = await write("todo-add", { text });
+      if (answer === null) return;
+      setDraft("");
+      if (draftInput.current) draftInput.current.focus();
+    };
+
+    const toggleTodo = (todo) => {
+      if (busy) return;
+      void write("todo-toggle", {
+        id: todo.id,
+        title: todo.title,
+        complete: !todo.complete,
+      });
+    };
+
+    // A removal takes two taps: the first arms it, and the second within 5 s
+    // drops the line. The ids are line numbers, so the title goes with them.
+    const removeTodo = (todo) => {
+      if (busy) return;
+      const key = `${todo.id}\0${todo.title}`;
+      if (armed !== key) {
+        setArmed(key);
+        if (armedTimer.current) clearTimeout(armedTimer.current);
+        armedTimer.current = setTimeout(() => setArmed(null), 5000);
+        return;
+      }
+      setArmed(null);
+      if (armedTimer.current) clearTimeout(armedTimer.current);
+      void write("todo-remove", { id: todo.id, title: todo.title });
+    };
+
+    const scopeButton = (id, label) =>
+      html`<button
+        type="button"
+        class=${scope === id ? "on" : ""}
+        aria-pressed=${scope === id}
+        disabled=${busy}
+        onClick=${() => setScope(id)}
+      >
+        ${label}
+      </button>`;
+
+    if (listing === null && listingError === null) {
+      return html`<${Loader} label="Reading TODOs" />`;
+    }
+    if (listing === null) {
+      return html`<div class="error-box">${listingError}</div>`;
+    }
+    if (!current) {
+      return html`<p style=${{ padding: "12px" }}>
+        No worktrees yet, so there is no TODO list to show.
+      </p>`;
+    }
+
+    const todos = (list && list.todos) || [];
+    const done = list ? list.summary.complete : 0;
+    const total = list ? list.summary.complete + list.summary.incomplete : 0;
+
+    return html`<section
+      style=${{
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        height: "100%",
+        padding: "12px 12px 0",
+        fontSize: "13px",
+      }}
+    >
+      <div
+        class="segmented"
+        role="group"
+        aria-label="Which TODO list"
+        style=${{ flex: "none" }}
+      >
+        ${scopeButton("worktree", "Worktree")}
+        ${scopeButton("repo", "Repository")}
+      </div>
+      <select
+        aria-label="Worktree"
+        value=${String(currentAt)}
+        disabled=${busy}
+        onChange=${(e) => {
+          const next = worktrees[Number(e.target.value)];
+          setChosen(next ? { repo: next.repo, name: next.name } : null);
+        }}
+        style=${{ flex: "none" }}
+      >
+        ${worktrees.map(
+          (w, at) =>
+            html`<option key=${w.path} value=${String(at)}>
+              ${w.name}@${w.repo}
+            </option>`,
+        )}
+      </select>
+      <form
+        onSubmit=${addTodo}
+        style=${{ display: "flex", gap: "6px", flex: "none" }}
+      >
+        <input
+          ref=${(el) => {
+            draftInput.current = el;
+          }}
+          value=${draft}
+          placeholder="Add a task"
+          aria-label="New task"
+          disabled=${busy}
+          onInput=${(e) => setDraft(e.target.value)}
+          style=${{ flex: "1", minWidth: "0" }}
+        />
+        <button
+          class="button primary"
+          type="submit"
+          disabled=${busy || !draft.trim()}
+        >
+          ${busy ? html`<${Spinner} label="Saving the task" />` : "Add"}
+        </button>
+      </form>
+      <div
+        style=${{ flex: "1", minHeight: "0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" }}
+      >
+        ${error && html`<div class="error-box">${error}</div>`}
+        ${
+          loading &&
+          !list &&
+          !error &&
+          html`<${Loader} label="Reading TODOs" />`
+        }
+        ${
+          list &&
+          todos.length === 0 &&
+          html`<p class="muted">
+            No tasks in
+            ${scope === "repo" ? "this repository's list" : "this worktree's list"}.
+          </p>`
+        }
+        <ul
+          style=${{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+        >
+          ${todos.map((todo) => {
+            const removeKey = `${todo.id}\0${todo.title}`;
+            const armedRow = armed === removeKey;
+            return html`<li
+              key=${`${todo.id}`}
+              style=${{ borderTop: "1px solid var(--line)", paddingLeft: `${todo.depth * 14}px` }}
+            >
+              <div
+                style=${{ display: "flex", alignItems: "flex-start", gap: "4px" }}
+              >
+                <label
+                  style=${{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "7px 0", minWidth: "0", flex: "1" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked=${todo.complete}
+                    disabled=${busy}
+                    aria-label=${`${todo.complete ? "Done" : "Open"}: ${todo.title}`}
+                    onChange=${() => toggleTodo(todo)}
+                    style=${{ flex: "none", width: "15px", height: "15px", margin: "2px 0 0", padding: "0", accentColor: "var(--accent)" }}
+                  />
+                  <span
+                    style=${{
+                      minWidth: "0",
+                      overflowWrap: "anywhere",
+                      ...(todo.complete
+                        ? {
+                            color: "var(--muted)",
+                            textDecoration: "line-through",
+                          }
+                        : {}),
+                    }}
+                    >${todo.title}</span
+                  >
+                </label>
+                <button
+                  class="button small"
+                  type="button"
+                  disabled=${busy}
+                  title=${
+                    armedRow
+                      ? `Click again within 5s to remove ${todo.title}`
+                      : `Remove ${todo.title}`
+                  }
+                  aria-label=${
+                    armedRow
+                      ? `Confirm remove ${todo.title}`
+                      : `Remove ${todo.title}`
+                  }
+                  onClick=${() => removeTodo(todo)}
+                  style=${{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: "28px",
+                    height: "28px",
+                    marginTop: "3px",
+                    padding: armedRow ? "0 6px" : "0",
+                    flex: "none",
+                    fontSize: "12px",
+                    fontWeight: armedRow ? "700" : "400",
+                    color: armedRow ? "var(--err)" : "var(--muted)",
+                  }}
+                >
+                  ${
+                    armedRow
+                      ? "Remove?"
+                      : html`<${Icon} path=${TRASH_PATH} size=${14} />`
+                  }
+                </button>
+              </div>
+            </li>`;
+          })}
+        </ul>
+      </div>
+      <div
+        style=${{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flex: "none",
+          borderTop: "1px solid var(--line)",
+          padding: "8px 0",
+        }}
+      >
+        <span class="small muted" aria-live="polite"
+          >${list ? `${done} of ${total} done` : ""}</span
+        >
+        <span
+          class="small muted mono"
+          title=${
+            scope === "repo"
+              ? "The list that every worktree of this repository shares"
+              : "This worktree's own list"
+          }
+          style=${{ marginLeft: "auto", flex: "none" }}
+          >${scope === "repo" ? "TODO.repo.md" : "TODO.md"}</span
+        >
+      </div>
+    </section>`;
+  }
+
   pocket.page({
     id: "timber",
     title: "Worktrees",
@@ -1563,6 +1956,25 @@ export default function setup(pocket) {
     page: "timber",
   });
 
+  pocket.page({
+    id: "todos",
+    title: "TODOs",
+    component: TodoPanel,
+  });
+  pocket.rail({
+    id: "todos",
+    title: "TODOs",
+    iconPath: TODO_ICON,
+    page: "todos",
+  });
+  pocket.launcher({
+    id: "todos",
+    label: "Timber TODOs",
+    detail: "worktree and repository lists",
+    keywords: ["todo", "task", "checklist", "timber"],
+    page: "todos",
+  });
+
   // The panel is a second surface for a wide screen: a button in the top bar
   // and one in the places. The rail button and the launcher use the page
   // instead, because a panel shows only in a session: on a phone's session
@@ -1573,6 +1985,14 @@ export default function setup(pocket) {
       title: "Worktrees",
       iconPath: TIMBER_ICON,
       component: TimberPage,
+    });
+  }
+  if (typeof pocket.panel === "function") {
+    pocket.panel({
+      id: "todos",
+      title: "TODOs",
+      iconPath: TODO_ICON,
+      component: TodoPanel,
     });
   }
 }
