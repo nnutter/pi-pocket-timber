@@ -1211,7 +1211,7 @@ export default function setup(pocket) {
                       ? "No TODOs"
                       : `TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`
                   }
-                  style=${{ ...ROW_ITEM, width: "52px", marginLeft: "20px", gap: "4px", flex: "none", overflow: "hidden" }}
+                  style=${{ ...ROW_ITEM, minWidth: "52px", marginLeft: "20px", gap: "4px", flex: "none" }}
                 >
                   ${w.todoTotal === undefined ? "" : html`<${Icon} name="check" size=${14} />`}
                   ${w.todoTotal === undefined ? "" : `${w.todoDone ?? 0}/${w.todoTotal}`}
@@ -1223,7 +1223,7 @@ export default function setup(pocket) {
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ ...ROW_ITEM, width: "48px", marginLeft: "8px", gap: "4px", flex: "none", overflow: "hidden" }}
+                  style=${{ ...ROW_ITEM, minWidth: "48px", marginLeft: "8px", gap: "4px", flex: "none" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}
