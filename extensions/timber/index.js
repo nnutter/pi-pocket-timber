@@ -52,8 +52,8 @@ export default function setup(pocket) {
   }
 
   /**
-   * The colour a row's state had as a badge, now carried by its buttons: merged
-   * purple, dirty amber, clean with a PR green, plain clean the muted grey.
+   * The color a row's state had as a badge, now carried by its buttons: merged
+   * purple, dirty amber, clean with a PR green, plain clean the muted gray.
    */
   function stateColor(kind) {
     if (kind === "merged") return "#8957e5";
@@ -1094,7 +1094,7 @@ export default function setup(pocket) {
                   ? "clean-pr"
                   : "clean";
             // The badge used to say the state in words. Its column is gone, so
-            // the row's action buttons show the state as their colour.
+            // the row's action buttons show the state as their color.
             const stateStyle = { color: stateColor(kind) };
             // The row of the worktree this session works in: a pill in a gutter
             // says why it sits above the rows the sort put there. Every row
