@@ -46,7 +46,7 @@ Write the sidecar again after the files change: it records their hashes.
   Each row's buttons work on that row alone, so several worktrees can push, merge, or open a PR at once.
   The worktree the session works in stays first, marked with an accent stripe, whatever the search and the sort say.
   A row's status is one line: the session button, then the TODO and review counts beside it, then the commit count next to the one action button; a count of zero is left out.
-  The button's color says what it will do: purple removes, green merges or acts on a clean worktree, amber is a dirty worktree or checks still running, red is a failed check run or a branch that must be synced first
+  The button's color says what it will do: periwinkle removes, green merges or acts on a clean worktree, amber is a dirty worktree or checks still running, red is a failed check run or a branch that must be synced first
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it

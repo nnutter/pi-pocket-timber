@@ -55,13 +55,15 @@ export default function setup(pocket) {
    * The color of a row's one action button: green when the button can do its
    * job on a clean worktree, amber while the worktree is dirty or the pull
    * request's checks are still running, red when something is in the way, and
-   * purple for a removal. A button that cannot work is not drawn at all.
+   * periwinkle for a removal. A button that cannot work is not drawn at all.
    *
-   * Push, a new pull request, running checks and a removal wear the dimmer
-   * shade of their color; a merge and the two reds wear the color itself.
+   * Push, a new pull request and running checks wear the dimmer shade of their
+   * color; a merge, the two reds and a removal wear the color itself.
    */
   function actionColor(action, w, checks) {
-    if (action === "delete") return dimShade("#8957e5");
+    // Already drawn to the row's background: a pale periwinkle that stays
+    // readable on it, where a dim shade would sink into it.
+    if (action === "delete") return "#a4aaf3";
     if (action === "merge") return "var(--ok)";
     if (action === "push" || action === "create-pr") {
       return dimShade(w.clean && !w.statusError ? "var(--ok)" : "var(--warn)");
@@ -613,6 +615,14 @@ export default function setup(pocket) {
         setError(null);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Merge failed");
+        // The route read the PR again to refuse the merge, and it handed the
+        // row that reading: show it, instead of a button that can only fail
+        // again. The next poll would say the same thing a minute later.
+        try {
+          setData(await pocket.api("state"));
+        } catch {
+          // Keep the reason on screen; the next poll re-reads the row.
+        }
       } finally {
         endAction(rowAction("merge", worktree));
       }
@@ -1201,7 +1211,7 @@ export default function setup(pocket) {
                       ? "No TODOs"
                       : `TODO ${w.todoDone ?? 0} of ${w.todoTotal} done`
                   }
-                  style=${{ ...ROW_ITEM, width: "52px", marginLeft: "20px", gap: "4px", flex: "none", overflow: "hidden" }}
+                  style=${{ ...ROW_ITEM, minWidth: "52px", marginLeft: "20px", gap: "4px", flex: "none" }}
                 >
                   ${w.todoTotal === undefined ? "" : html`<${Icon} name="check" size=${14} />`}
                   ${w.todoTotal === undefined ? "" : `${w.todoDone ?? 0}/${w.todoTotal}`}
@@ -1213,7 +1223,7 @@ export default function setup(pocket) {
                       ? `Review ${w.review.approved} of ${w.review.total} approved`
                       : "Review status unknown"
                   }
-                  style=${{ ...ROW_ITEM, width: "48px", marginLeft: "8px", gap: "4px", flex: "none", overflow: "hidden" }}
+                  style=${{ ...ROW_ITEM, minWidth: "48px", marginLeft: "8px", gap: "4px", flex: "none" }}
                 >
                   <${Icon} name="eye" size=${14} />
                   ${w.review ? `${w.review.approved}/${w.review.total}` : "?"}

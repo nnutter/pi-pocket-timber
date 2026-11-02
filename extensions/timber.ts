@@ -464,10 +464,12 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 }
 
 // Fields `gh pr view` must return for parsePrView.
-const PR_VIEW_FIELDS = "number,url,state,isDraft,statusCheckRollup";
+const PR_VIEW_FIELDS =
+  "number,url,state,isDraft,statusCheckRollup,mergeStateStatus";
 
 // What the pull request's checks are doing: all passed, at least one failed,
-// some still to finish (or queued), or none at all.
+// some still to finish (or queued), or none at all. "none" is not "no checks
+// ran": a push whose CI has not registered yet reads the same way.
 type ChecksState = "passed" | "failed" | "pending" | "none";
 
 type PrView = {
@@ -475,6 +477,9 @@ type PrView = {
   url: string;
   draft: boolean;
   checks: ChecksState;
+  // GitHub's own answer on whether the PR can merge now, in upper case; null
+  // when this `gh` does not report it.
+  mergeState: string | null;
 };
 
 const FAILING_CONCLUSIONS = [
@@ -530,11 +535,14 @@ function parsePrView(stdout: string): PrView | null {
       typeof parsed["number"] === "number"
     ) {
       const checks = parsed["statusCheckRollup"];
+      const mergeState = parsed["mergeStateStatus"];
       return {
         number: parsed["number"],
         url: parsed["url"],
         draft: parsed["isDraft"] === true,
         checks: checksState(checks),
+        mergeState:
+          typeof mergeState === "string" ? mergeState.toUpperCase() : null,
       };
     }
   } catch {
@@ -545,6 +553,38 @@ function parsePrView(stdout: string): PrView | null {
 
 type PushInfo = { destExists: boolean; unpushed: number; ff: boolean };
 
+// What GitHub says stands in the way of a merge, or null when it reports
+// nothing in the way. Its own read is the only one that can tell a repository
+// without CI from a push whose CI has not started: both have an empty check
+// rollup, and only GitHub knows whether checks are expected.
+function mergeStateBlocker(pr: PrView): string | null {
+  switch (pr.mergeState) {
+    case null:
+    case "CLEAN":
+    case "HAS_HOOKS":
+    // A failing check, which GitHub lets a merge through: the check state below
+    // refuses it with the reason that names the checks.
+    case "UNSTABLE":
+      return null;
+    case "DRAFT":
+      return "PR is a draft";
+    case "DIRTY":
+      return "The PR has conflicts with its base branch";
+    case "BEHIND":
+      return "The base branch has commits the PR lacks";
+    case "BLOCKED":
+      // A check still running reads the same as a review not yet given; only
+      // the check state can say which one it is.
+      return pr.checks === "failed" || pr.checks === "pending"
+        ? "Checks have not all passed"
+        : "GitHub blocks the merge: a required check or review is missing, or a thread is unresolved";
+    default:
+      // UNKNOWN, or a state this module does not know: GitHub has not finished
+      // reading the PR, so a merge now can still be refused.
+      return "GitHub has not finished reading the PR's merge state";
+  }
+}
+
 // Why an open PR cannot merge yet, or null when it can. The panel shows this
 // reason and the merge route enforces it.
 function mergeBlocker(pr: PrView, push: PushInfo): string | null {
@@ -552,6 +592,8 @@ function mergeBlocker(pr: PrView, push: PushInfo): string | null {
   if (!push.destExists) return "Branch is not pushed";
   if (!push.ff) return "origin has commits this branch lacks";
   if (push.unpushed > 0) return "Local has unpushed commits";
+  const stateBlocker = mergeStateBlocker(pr);
+  if (stateBlocker) return stateBlocker;
   // Checks that do not exist are not checks that failed: a repository without
   // CI merges straight away, and where required checks exist but have not
   // started, GitHub itself refuses the merge.
@@ -1297,6 +1339,15 @@ export default function createTimber(host: unknown, web: Web) {
         if (!pr) throw web.error(409, `No open PR for ${name}@${repo}`);
         const blocker = mergeBlocker(pr, await pushInfo(found.path, name));
         if (blocker) {
+          // The row drew this button from a reading that can be a minute old,
+          // and this read is the one that refused it: hand the row the fresh
+          // reading, so it stops offering a merge that cannot happen.
+          try {
+            await refreshWorktreeState(repo, name);
+            web.send("fetched", { at: Date.now() });
+          } catch {
+            // The row's entry stays dropped, so the next poll reads it fresh.
+          }
           throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
         }
         const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);
