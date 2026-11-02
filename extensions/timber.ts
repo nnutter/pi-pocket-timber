@@ -61,6 +61,9 @@ type PrEntry = {
   mergeBlocker?: string | null;
   // What the PR's checks are doing. Set only with a PR.
   checks?: ChecksState;
+  // `owner/name` from the worktree's `origin` remote, for its link. Null when
+  // the remote does not name one.
+  repo?: string | null;
 };
 let prCache: {
   at: number;
@@ -602,18 +605,23 @@ function prEntry(pr: PrView, push: PushInfo): PrEntry {
 
 // The open PR and push state of one worktree, read in the worktree's folder,
 // with the key that the PR cache and the rows use.
-async function readPushAndPr(
-  w: Worktree,
-): Promise<{ key: string; pr: PrView | null; push: PushInfo }> {
+async function readPushAndPr(w: Worktree): Promise<{
+  key: string;
+  pr: PrView | null;
+  push: PushInfo;
+  repo: string | null;
+}> {
   const key = `${w.repo}\0${w.name}`;
-  const [viewed, push] = await Promise.all([
+  const [viewed, push, remote] = await Promise.all([
     runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
     pushInfo(w.path, w.name),
+    runCmd("git", ["remote", "get-url", "origin"], w.path),
   ]);
   return {
     key,
     pr: viewed.code === 0 ? parsePrView(viewed.stdout) : null,
     push,
+    repo: remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null,
   };
 }
 
@@ -1023,8 +1031,8 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       const entries = await Promise.all(
         worktrees.map(async (w) => {
-          const { key, pr, push } = await readPushAndPr(w);
-          return [key, pr ? prEntry(pr, push) : push] as const;
+          const { key, pr, push, repo } = await readPushAndPr(w);
+          return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
         }),
       );
       const map: Record<string, PrEntry> = {};
@@ -1152,12 +1160,12 @@ export default function createTimber(host: unknown, web: Web) {
             (w) => w.repo === repo && w.name === name,
           );
           if (found) {
-            const { key, pr, push } = await readPushAndPr(found);
+            const { key, pr, push, repo } = await readPushAndPr(found);
             prCache = {
               at: Date.now(),
               map: {
                 ...(prCache?.map ?? {}),
-                [key]: pr ? prEntry(pr, push) : push,
+                [key]: { ...(pr ? prEntry(pr, push) : push), repo },
               },
             };
             try {
