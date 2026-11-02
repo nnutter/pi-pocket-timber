@@ -133,6 +133,55 @@ export default function setup(pocket) {
     return payload;
   }
 
+  // The folder of the session this tab shows, or null. What the tab shows is
+  // put first by the page and by the TODOs panel, and neither can read the
+  // folder itself: the server answers it.
+  function useSessionPath() {
+    const [sessionPath, setSessionPath] = useState(null);
+    useEffect(() => {
+      let alive = true;
+      const readFolder = (id) => {
+        if (id === null) {
+          if (alive) setSessionPath(null);
+          return;
+        }
+        void pocket
+          .api(`folder?session=${id}`)
+          .then((answer) => {
+            if (alive) setSessionPath((answer && answer.path) || null);
+          })
+          .catch(() => {
+            if (alive) setSessionPath(null);
+          });
+      };
+      readFolder(pocket.conversationId());
+      const stop =
+        typeof pocket.onConversation === "function"
+          ? pocket.onConversation((id) => readFolder(id))
+          : () => undefined;
+      return () => {
+        alive = false;
+        stop();
+      };
+    }, []);
+    return sessionPath;
+  }
+
+  // The worktree a session works in: its own folder, or the deepest worktree
+  // folder that holds the session's, since a session can start below a
+  // worktree's root. Null when the session works somewhere else.
+  function findSessionWorktree(worktrees, sessionPath) {
+    if (!sessionPath) return null;
+    let best = null;
+    for (const w of worktrees) {
+      const root = (w.path || "").replace(/\/+$/, "");
+      if (!root) continue;
+      if (sessionPath !== root && !sessionPath.startsWith(`${root}/`)) continue;
+      if (!best || root.length > best.root) best = { root: root.length, w };
+    }
+    return best ? best.w : null;
+  }
+
   function TimberPage() {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
@@ -160,7 +209,7 @@ export default function setup(pocket) {
     const [search, setSearch] = useState("");
     // The folder of the session this tab shows, or null. The pin needs it and
     // the page cannot read it, so the server answers it.
-    const [sessionPath, setSessionPath] = useState(null);
+    const sessionPath = useSessionPath();
     const [sort, setSort] = useState("recent");
     const [creating, setCreating] = useState(false);
     const [adding, setAdding] = useState(false);
@@ -252,33 +301,6 @@ export default function setup(pocket) {
       if (m < 60) return `${m}m ago`;
       return `${Math.floor(m / 60)}h ago`;
     };
-
-    useEffect(() => {
-      let alive = true;
-      const readFolder = (id) => {
-        if (id === null) {
-          if (alive) setSessionPath(null);
-          return;
-        }
-        void pocket
-          .api(`folder?session=${id}`)
-          .then((answer) => {
-            if (alive) setSessionPath((answer && answer.path) || null);
-          })
-          .catch(() => {
-            if (alive) setSessionPath(null);
-          });
-      };
-      readFolder(pocket.conversationId());
-      const stop =
-        typeof pocket.onConversation === "function"
-          ? pocket.onConversation((id) => readFolder(id))
-          : () => undefined;
-      return () => {
-        alive = false;
-        stop();
-      };
-    }, []);
 
     useEffect(() => {
       let alive = true;
@@ -639,27 +661,10 @@ export default function setup(pocket) {
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
 
-    // The worktree the session this tab shows works in: its own folder, or the
-    // deepest worktree folder that holds the session's, since a session can
-    // start below a worktree's root. Null when this tab shows no session, or
-    // one that works somewhere else.
-    const pinnedKey = (() => {
-      if (!sessionPath) return null;
-      let best = null;
-      for (const w of worktrees) {
-        const root = (w.path || "").replace(/\/+$/, "");
-        if (!root) continue;
-        if (sessionPath !== root && !sessionPath.startsWith(`${root}/`)) {
-          continue;
-        }
-        if (!best || root.length > best.length) {
-          best = { length: root.length, key: rowKey(w) };
-        }
-      }
-      return best ? best.key : null;
-    })();
-    const pinned =
-      (pinnedKey && worktrees.find((w) => rowKey(w) === pinnedKey)) || null;
+    // The worktree the session this tab shows works in. Null when this tab
+    // shows no session, or one that works somewhere else.
+    const pinned = findSessionWorktree(worktrees, sessionPath);
+    const pinnedKey = pinned ? rowKey(pinned) : null;
 
     const filtered = worktrees
       .filter((w) => {
