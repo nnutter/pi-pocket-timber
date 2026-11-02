@@ -80,16 +80,6 @@ export default function setup(pocket) {
     return `color-mix(in srgb, ${color} 78%, var(--bg))`;
   }
 
-  /** The key that names one worktree's row, in the state's PR map and its ids. */
-  function rowKey(w) {
-    return `${w.repo}\0${w.name}`;
-  }
-
-  /** The action id for a verb on one worktree row. */
-  function rowAction(verb, w) {
-    return `${verb}\0${rowKey(w)}`;
-  }
-
   /**
    * The state's listing with one worktree's row replaced by what the server read
    * after an action changed it. No other row is touched, so an action refreshes
