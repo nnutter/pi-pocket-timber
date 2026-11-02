@@ -516,12 +516,9 @@ export default function setup(pocket) {
             : open,
         );
         setNotice(
-          [
-            result.created
-              ? `Created PR #${result.number}.`
-              : `PR #${result.number} already exists.`,
-            ...(result.warnings || []),
-          ].join(" "),
+          result.created
+            ? `Created PR #${result.number}.`
+            : `PR #${result.number} already exists.`,
         );
         setError(null);
         // Re-read so the row shows the PR and its merge state. The server

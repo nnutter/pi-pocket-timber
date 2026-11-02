@@ -1,6 +1,6 @@
 /**
  * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, archiving the sessions that worked in them, from a worktrees page, and from a panel on a wide screen.
- * Wraps the `timber` CLI on the server (with `gh` for pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, and open-or-create PR per worktree.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, and open-or-create PR per worktree.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -725,7 +725,7 @@ async function currentBranch(cwd: string): Promise<string> {
   return name;
 }
 
-// The pull request `gh pr create` prints, as a URL.
+// The pull request `timber pr create` prints, as a URL.
 function prFromCreateOutput(
   stdout: string,
 ): { url: string; number: number } | null {
@@ -780,17 +780,76 @@ async function prTarget(
   return { repo, base, remote };
 }
 
+// timber styles its reports for a terminal, so its stderr arrives as a box
+// with wrapped lines. Join them back into one message.
+function timberMessage(stderr: string): string {
+  return stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && line !== "ERROR" && line !== "STATUS")
+    .reduce(
+      (text, line) =>
+        text === ""
+          ? line
+          : text.endsWith("-")
+            ? text + line
+            : `${text} ${line}`,
+      "",
+    );
+}
+
+// A title and body for an empty form, from the commits the pull request would
+// carry, the way `gh pr create --fill` derives them: one commit describes
+// itself, and several title the pull request with the branch's name and list
+// their subjects. The upstream names the base branch, so these are the PR's
+// commits.
+async function fillDraft(
+  cwd: string,
+  name: string,
+): Promise<{ title: string; body: string }> {
+  const log = await runCmd(
+    "git",
+    ["log", "--reverse", "--format=%s%x1f%b%x1e", "@{u}..HEAD"],
+    cwd,
+  );
+  if (log.code !== 0) {
+    throw new Error(
+      `No upstream for ${name}, so an empty form has no commits to describe. Type a subject, or set one with: git branch --set-upstream-to=origin/<branch>`,
+    );
+  }
+  const commits = log.stdout
+    .split("\x1e")
+    .map((record) => record.replace(/^\n/, ""))
+    .filter((record) => record.trim() !== "")
+    .map((record) => {
+      const [subject = "", body = ""] = record.split("\x1f");
+      return { subject: subject.trim(), body: body.trim() };
+    });
+  const newest = commits[commits.length - 1];
+  if (!newest) {
+    throw new Error(
+      `No commits in ${name} that its upstream lacks, so an empty form has nothing to describe. Type a subject.`,
+    );
+  }
+  if (commits.length === 1) {
+    return { title: newest.subject, body: newest.body };
+  }
+  return {
+    title: name.replace(/[-_]/g, " "),
+    body: commits.map((commit) => `- **${commit.subject}**`).join("\n"),
+  };
+}
+
+// The pull request for a worktree, created when none is open. `timber pr
+// create` names the base repository and branch from the branch's upstream,
+// refuses a branch GitHub does not have, and never pushes or changes the
+// upstream.
 async function openOrCreatePr(
   repo: string,
   name: string,
   title: string,
   body: string,
-): Promise<{
-  url: string;
-  number: number;
-  created: boolean;
-  warnings: string[];
-}> {
+): Promise<{ url: string; number: number; created: boolean }> {
   checkRepoName(repo);
   checkBranchName(name, "worktree name");
 
@@ -801,103 +860,44 @@ async function openOrCreatePr(
   if (!found) throw new Error(`Worktree not found: ${name}@${repo}`);
   const cwd = found.path;
 
-  const target = await prTarget(cwd, name);
-
-  const branch = await currentBranch(cwd);
-
-  const viewPr = async (
-    which: string,
-  ): Promise<{ url: string; number: number } | null> => {
-    const result = await runCmd(
-      "gh",
-      ["pr", "view", which, "--repo", target.repo, "--json", PR_VIEW_FIELDS],
-      cwd,
-    );
-    return result.code === 0 ? parsePrView(result.stdout) : null;
-  };
-
-  const existing = await viewPr(branch);
-  if (existing) return { ...existing, created: false, warnings: [] };
-
-  // `gh pr create` switches the branch upstream to the new PR branch.
-  // Snapshot it and put it back (or remove what gh added) afterwards.
-  const upstreamOf = async (): Promise<string> => {
-    const result = await runCmd(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-      cwd,
-    );
-    return result.code === 0 ? result.stdout.trim() : "";
-  };
-
   if (!title.trim() && body.trim()) {
     throw new Error("A PR subject is required when a body is provided.");
   }
+  const draft = title.trim() ? { title, body } : await fillDraft(cwd, name);
 
-  const warnings: string[] = [];
-  const before = await upstreamOf();
-  let createdPr: { url: string; number: number } | null = null;
-  try {
-    const created = await runCmd(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        target.repo,
-        "--base",
-        target.base,
-        ...(title.trim() || body.trim()
-          ? ["--title", title, "--body", body]
-          : ["--fill"]),
-      ],
-      cwd,
-      180_000,
-    );
-    if (created.code !== 0) {
-      throw new Error(
-        created.stderr.trim() || `gh pr create failed (exit ${created.code})`,
-      );
-    }
-    createdPr = prFromCreateOutput(created.stdout);
-  } finally {
-    try {
-      const after = await upstreamOf();
-      if (before && after !== before) {
-        const restored = await runCmd(
-          "git",
-          ["branch", `--set-upstream-to=${before}`],
-          cwd,
-        );
-        if (restored.code !== 0) {
-          warnings.push(
-            `Upstream was ${before}; could not restore it: ${restored.stderr.trim()}`,
-          );
-        }
-      } else if (!before && after) {
-        const unset = await runCmd("git", ["branch", "--unset-upstream"], cwd);
-        if (unset.code !== 0) {
-          warnings.push(
-            `Could not remove upstream ${after} that gh set: ${unset.stderr.trim()}`,
-          );
-        }
-      }
-    } catch (error) {
-      warnings.push(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  // `gh pr create` sets the branch's upstream to the pull request's branch, and
-  // the upstream is put back above, so look the new PR up by what gh printed,
-  // then by the branch.
-  const opened =
-    (createdPr && (await viewPr(createdPr.url))) || (await viewPr(branch));
-  if (!opened) {
+  const created = await runTimber([
+    "pr",
+    "create",
+    `${name}@${repo}`,
+    "--title",
+    draft.title,
+    ...(draft.body.trim() ? ["--body", draft.body] : []),
+  ]);
+  const printed = prFromCreateOutput(created.stdout);
+  if (created.code === 0 && printed) return { ...printed, created: true };
+  if (created.code === 0) {
     throw new Error(
-      "PR create reported success but no PR is visible; refresh and inspect before retrying.",
+      "PR create reported success but printed no pull request; refresh and inspect before retrying.",
     );
   }
-  return { ...opened, created: true, warnings };
+
+  const message =
+    timberMessage(created.stderr) ||
+    `timber pr create failed (exit ${created.code})`;
+  // The row said no pull request was open, but one may have been opened since.
+  // timber refuses a second one, so open the one that exists.
+  if (/already exists/i.test(message)) {
+    const viewed = await runCmd(
+      "gh",
+      ["pr", "view", "--json", "number,url,state"],
+      cwd,
+    );
+    const opened = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+    if (opened) {
+      return { url: opened.url, number: opened.number, created: false };
+    }
+  }
+  throw new Error(message);
 }
 
 async function removeWorktree(
@@ -1213,7 +1213,6 @@ export default function createTimber(host: unknown, web: Web) {
       url: string;
       number: number;
       created: boolean;
-      warnings: string[];
     }> => {
       try {
         const repo = typeof body["repo"] === "string" ? body["repo"] : "";
@@ -1223,8 +1222,8 @@ export default function createTimber(host: unknown, web: Web) {
         const result = await openOrCreatePr(repo, name, title, prBody);
         // Warm the PR cache so the row can show the PR without waiting for the
         // next background refresh. This is the refresh's own read, so the entry
-        // holds the real draft and check state; `openOrCreatePr` has already
-        // seen the PR with `gh pr view`, so the read finds it again.
+        // holds the real draft and check state; the pull request exists, so the
+        // read finds it.
         try {
           await refreshWorktreeState(repo, name);
           try {
