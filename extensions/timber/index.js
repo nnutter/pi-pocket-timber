@@ -55,13 +55,15 @@ export default function setup(pocket) {
    * The color of a row's one action button: green when the button can do its
    * job on a clean worktree, amber while the worktree is dirty or the pull
    * request's checks are still running, red when something is in the way, and
-   * purple for a removal. A button that cannot work is not drawn at all.
+   * periwinkle for a removal. A button that cannot work is not drawn at all.
    *
-   * Push, a new pull request, running checks and a removal wear the dimmer
-   * shade of their color; a merge and the two reds wear the color itself.
+   * Push, a new pull request and running checks wear the dimmer shade of their
+   * color; a merge, the two reds and a removal wear the color itself.
    */
   function actionColor(action, w, checks) {
-    if (action === "delete") return dimShade("#8957e5");
+    // Already drawn to the row's background: a pale periwinkle that stays
+    // readable on it, where a dim shade would sink into it.
+    if (action === "delete") return "#a4aaf3";
     if (action === "merge") return "var(--ok)";
     if (action === "push" || action === "create-pr") {
       return dimShade(w.clean && !w.statusError ? "var(--ok)" : "var(--warn)");
