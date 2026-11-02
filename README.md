@@ -11,7 +11,7 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests).
 - [`gh`](https://cli.github.com/) signed in, for pull requests (`gh auth login`)
 - `git` (for upstream bookkeeping around `gh pr create`)
 - Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts).
-  Archiving a removed worktree's sessions needs 0.20.0; an older server leaves those sessions as they are.
+  Archiving a removed worktree's sessions and pinning the session's worktree need 0.20.0; an older server leaves those sessions as they are, and lists the worktrees in their plain order.
 
 ## Install
 
@@ -42,13 +42,21 @@ Write the sidecar again after the files change: it records their hashes.
 
 ## What it adds
 
-- **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts
+- **Timber worktrees page** (rail + launcher), and a panel on a wide screen: search, sort, per-worktree status (Merged / Clean / Dirty), ahead/behind, TODO and review counts.
+  Each row's buttons work on that row alone, so several worktrees can push, merge, or open a PR at once.
+  The worktree the session works in stays first, marked with an accent stripe, whatever the search and the sort say.
+  A row's status is one line: the session button, then the TODO and review counts beside it, then the commit count next to the one action button; a count of zero is left out, and the button's colour says Merged, Clean or Dirty
 - **Open**: starts a linked session in the worktree's folder
 - **New worktree / Add repository** forms
-- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it; otherwise a **PR button** that opens the worktree's pull request or creates one with `gh pr create --fill`
+- **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
+- **PR link**: each row links its open pull request, right-aligned in the name row.
+  The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open
+- **Action button**: one per row, chosen by what the row needs.
+  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not); unpushed commits offer a push; a clean, merged worktree offers delete; a row with no PR opens the create form (`gh pr create --fill`, or a `pi`-written draft).
+  Creating one does not open a browser tab: the notice names the PR, and the row links it
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
   Note: timber's own ahead/behind counts against the base branch, so push state is measured directly with git and cached with the PR data
-- **Refresh**: lists worktrees and fetches all remotes; auto-fetch every 5 minutes so merged branches flip to Merged
+- **Refresh**: lists worktrees and fetches the remotes of the repositories that have worktrees; auto-fetch every 5 minutes so merged branches flip to Merged
 - Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`
 
 ## Safety notes

@@ -173,12 +173,18 @@ function checkRepoName(value: string): void {
   }
 }
 
+// The two timber commands read the same registry and answer apart, so they run
+// together: this read backs every state poll, and the pair took 0.8 s when one
+// waited for the other.
 async function readListing(): Promise<{
   repositories: string[];
   worktrees: Worktree[];
   warnings: string[];
 }> {
-  const reposResult = await runTimber(["repo", "list", "-q"]);
+  const [reposResult, listResult] = await Promise.all([
+    runTimber(["repo", "list", "-q"]),
+    runTimber(["list", "--json", "--sort", "recency"]),
+  ]);
   if (reposResult.code !== 0) {
     throw new Error(`timber repo list failed: ${reposResult.stderr.trim()}`);
   }
@@ -187,7 +193,6 @@ async function readListing(): Promise<{
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  const listResult = await runTimber(["list", "--json", "--sort", "recency"]);
   if (listResult.code !== 0) {
     throw new Error(`timber list failed: ${listResult.stderr.trim()}`);
   }
@@ -305,6 +310,35 @@ async function addRepository(
   return { repository: added[0], warnings: after.warnings };
 }
 
+// `items` run through `run`, `limit` of them at a time, with the answers in
+// the order given. Each `timber git @repo -- fetch` waits on the network, so a
+// pass over every repository takes a burst of fetches rather than their sum;
+// the limit keeps the burst from reaching every remote at once.
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const answers = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const at = next;
+      next += 1;
+      const item = items[at];
+      if (at >= items.length || item === undefined) return;
+      answers[at] = await run(item);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return answers;
+}
+
+// How many repositories fetch at once.
+const FETCH_CONCURRENCY = 4;
+
 async function fetchAllRepos(): Promise<{
   fetchedAt: number;
   errors: string[];
@@ -313,13 +347,20 @@ async function fetchAllRepos(): Promise<{
   fetching = true;
   try {
     const listing = await readListing();
+    // Only a repository with worktrees can put a row on the page, and the fetch
+    // is for those rows: their merged flag compares the branch with the remote.
+    // A registered repository that has no worktrees has nothing to show, so it
+    // keeps its remote as it is.
+    const repos = [...new Set(listing.worktrees.map((w) => w.repo))].sort();
+    const answered = await mapPool(repos, FETCH_CONCURRENCY, (repo) =>
+      runTimber(["git", `@${repo}`, "--", "fetch"]),
+    );
     const errors: string[] = [];
-    for (const repo of listing.repositories) {
-      const result = await runTimber(["git", `@${repo}`, "--", "fetch"]);
-      if (result.code !== 0 && result.stderr.trim()) {
-        errors.push(`${repo}: ${result.stderr.trim().split("\n")[0]}`);
-      }
-    }
+    repos.forEach((repo, at) => {
+      const result = answered[at];
+      if (!result || result.code === 0 || !result.stderr.trim()) return;
+      errors.push(`${repo}: ${result.stderr.trim().split("\n")[0]}`);
+    });
     lastFetchAt = Date.now();
     lastFetchError = errors.length > 0 ? errors.join("; ") : null;
     return { fetchedAt: lastFetchAt, errors };
@@ -509,6 +550,35 @@ async function pushInfo(
     cwd,
   );
   return { destExists, unpushed, ff: base.code === 0 };
+}
+
+// The cache entry for a worktree that has an open PR.
+function prEntry(pr: PrView, push: PushInfo): PrEntry {
+  return {
+    number: pr.number,
+    url: pr.url,
+    destExists: push.destExists,
+    unpushed: push.unpushed,
+    ff: push.ff,
+    mergeBlocker: mergeBlocker(pr, push),
+  };
+}
+
+// The open PR and push state of one worktree, read in the worktree's folder,
+// with the key that the PR cache and the rows use.
+async function readPushAndPr(
+  w: Worktree,
+): Promise<{ key: string; pr: PrView | null; push: PushInfo }> {
+  const key = `${w.repo}\0${w.name}`;
+  const [viewed, push] = await Promise.all([
+    runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
+    pushInfo(w.path, w.name),
+  ]);
+  return {
+    key,
+    pr: viewed.code === 0 ? parsePrView(viewed.stdout) : null,
+    push,
+  };
 }
 
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
@@ -878,7 +948,7 @@ const timberRepoAdd = defineTool({
 const timberFetch = defineTool({
   name: "timber_fetch",
   description:
-    "Fetch all Timber remotes so merged PRs show as Merged (timber git @repo -- fetch).",
+    "Fetch the remotes of the Timber repositories that have worktrees, so merged PRs show as Merged (timber git @repo -- fetch).",
   parameters: Type.Object({}),
   replay: "safe",
   execute: async () => {
@@ -917,32 +987,12 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       const entries = await Promise.all(
         worktrees.map(async (w) => {
-          const key = `${w.repo}\0${w.name}`;
-          const [viewed, push] = await Promise.all([
-            runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
-            pushInfo(w.path, w.name),
-          ]);
-          const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
-          if (pr) {
-            return [
-              key,
-              {
-                number: pr.number,
-                url: pr.url,
-                destExists: push.destExists,
-                unpushed: push.unpushed,
-                ff: push.ff,
-                mergeBlocker: mergeBlocker(pr, push),
-              },
-            ] as const;
-          }
-          return [key, push] as const;
+          const { key, pr, push } = await readPushAndPr(w);
+          return [key, pr ? prEntry(pr, push) : push] as const;
         }),
       );
       const map: Record<string, PrEntry> = {};
-      for (const entry of entries) {
-        if (entry) map[entry[0]] = entry[1];
-      }
+      for (const [key, entry] of entries) map[key] = entry;
       prCache = { at: Date.now(), map };
       try {
         web.send("fetched", { at: prCache.at });
@@ -1056,31 +1106,22 @@ export default function createTimber(host: unknown, web: Web) {
         const title = typeof body["title"] === "string" ? body["title"] : "";
         const prBody = typeof body["body"] === "string" ? body["body"] : "";
         const result = await openOrCreatePr(repo, name, title, prBody);
-        // Warm the PR cache so the row's upload icon can appear without
-        // waiting for the next background refresh.
+        // Warm the PR cache so the row can show the PR without waiting for the
+        // next background refresh. This is the refresh's own read, so the entry
+        // holds the real draft and check state; `openOrCreatePr` has already
+        // seen the PR with `gh pr view`, so the read finds it again.
         try {
           const listing = await readListing();
           const found = listing.worktrees.find(
             (w) => w.repo === repo && w.name === name,
           );
           if (found) {
-            const push = await pushInfo(found.path, name);
-            const key = `${repo}\0${name}`;
+            const { key, pr, push } = await readPushAndPr(found);
             prCache = {
               at: Date.now(),
               map: {
                 ...(prCache?.map ?? {}),
-                [key]: {
-                  number: result.number,
-                  url: result.url,
-                  destExists: push.destExists,
-                  unpushed: push.unpushed,
-                  ff: push.ff,
-                  mergeBlocker: mergeBlocker(
-                    { ...result, draft: false, checksPassed: false },
-                    push,
-                  ),
-                },
+                [key]: pr ? prEntry(pr, push) : push,
               },
             };
             try {
@@ -1225,6 +1266,25 @@ export default function createTimber(host: unknown, web: Web) {
         const message = error instanceof Error ? error.message : "merge failed";
         throw web.error(502, message);
       }
+    },
+  );
+
+  // The folder of the session a tab shows, so the page can keep that worktree's
+  // row at the top. The tab cannot read the folder itself, and a server older
+  // than 0.20.0 has no `sessions()`: it answers null, and the page keeps its
+  // plain order.
+  web.route(
+    "GET",
+    "folder",
+    async (request): Promise<{ path: string | null }> => {
+      const asked = (request.query.get("session") ?? "").trim();
+      const id = Number(asked);
+      if (!asked || !Number.isInteger(id)) {
+        throw web.error(400, "session is required");
+      }
+      if (typeof request.sessions !== "function") return { path: null };
+      const found = request.sessions().find((session) => session.id === id);
+      return { path: found ? found.cwd : null };
     },
   );
 
