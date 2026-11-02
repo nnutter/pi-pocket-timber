@@ -72,6 +72,10 @@ let prCache: {
 let prRefreshing = false;
 const PR_CACHE_TTL = 60_000;
 
+// A row after an action changed its worktree: the worktree as timber lists it
+// now, and its PR and push state.
+type WorktreeState = { worktree: Worktree; pr: PrEntry };
+
 async function runCmd(
   cmd: string,
   args: string[],
@@ -625,6 +629,24 @@ async function readPushAndPr(w: Worktree): Promise<{
   };
 }
 
+// A row's state after something changed its worktree: the worktree as timber
+// lists it now, and its PR and push state. Only this row is read, so a caller
+// that changed one worktree does not re-read every row.
+async function refreshWorktreeState(
+  repo: string,
+  name: string,
+): Promise<WorktreeState | null> {
+  const listing = await readListing();
+  const found = listing.worktrees.find(
+    (w) => w.repo === repo && w.name === name,
+  );
+  if (!found) return null;
+  const { key, pr, push, repo: origin } = await readPushAndPr(found);
+  const entry: PrEntry = { ...(pr ? prEntry(pr, push) : push), repo: origin };
+  prCache = { at: Date.now(), map: { ...(prCache?.map ?? {}), [key]: entry } };
+  return { worktree: found, pr: entry };
+}
+
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
 // URL names no repository on GitHub.
 function repoFromRemoteUrl(url: string): string | null {
@@ -1155,24 +1177,11 @@ export default function createTimber(host: unknown, web: Web) {
         // holds the real draft and check state; `openOrCreatePr` has already
         // seen the PR with `gh pr view`, so the read finds it again.
         try {
-          const listing = await readListing();
-          const found = listing.worktrees.find(
-            (w) => w.repo === repo && w.name === name,
-          );
-          if (found) {
-            const { key, pr, push, repo } = await readPushAndPr(found);
-            prCache = {
-              at: Date.now(),
-              map: {
-                ...(prCache?.map ?? {}),
-                [key]: { ...(pr ? prEntry(pr, push) : push), repo },
-              },
-            };
-            try {
-              web.send("fetched", { at: prCache.at });
-            } catch {
-              // Tabs may be gone; the next poll picks up the listing.
-            }
+          await refreshWorktreeState(repo, name);
+          try {
+            web.send("fetched", { at: Date.now() });
+          } catch {
+            // Tabs may be gone; the next poll picks up the listing.
           }
         } catch {
           // Warming is best-effort; the background refresh covers it.
