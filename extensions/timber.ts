@@ -59,6 +59,11 @@ type PrEntry = {
   ff: boolean;
   // Why the open PR cannot merge yet, or null when it can. Set only with a PR.
   mergeBlocker?: string | null;
+  // What the PR's checks are doing. Set only with a PR.
+  checks?: ChecksState;
+  // `owner/name` from the worktree's `origin` remote, for its link. Null when
+  // the remote does not name one.
+  repo?: string | null;
 };
 let prCache: {
   at: number;
@@ -457,12 +462,24 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 // Fields `gh pr view` must return for parsePrView.
 const PR_VIEW_FIELDS = "number,url,state,isDraft,statusCheckRollup";
 
+// What the pull request's checks are doing: all passed, at least one failed,
+// some still to finish (or queued), or none at all.
+type ChecksState = "passed" | "failed" | "pending" | "none";
+
 type PrView = {
   number: number;
   url: string;
   draft: boolean;
-  checksPassed: boolean;
+  checks: ChecksState;
 };
+
+const FAILING_CONCLUSIONS = [
+  "FAILURE",
+  "CANCELLED",
+  "TIMED_OUT",
+  "ACTION_REQUIRED",
+  "STARTUP_FAILURE",
+];
 
 const PASSING_CONCLUSIONS = ["SUCCESS", "NEUTRAL", "SKIPPED"];
 
@@ -475,6 +492,25 @@ function checkPassed(check: unknown): boolean {
     check["status"] === "COMPLETED" &&
     typeof check["conclusion"] === "string" &&
     PASSING_CONCLUSIONS.includes(check["conclusion"])
+  );
+}
+
+// The state of a pull request's `statusCheckRollup`.
+function checksState(checks: unknown): ChecksState {
+  if (!Array.isArray(checks) || checks.length === 0) return "none";
+  if (checks.some(checkFailed)) return "failed";
+  if (checks.every(checkPassed)) return "passed";
+  return "pending";
+}
+
+function checkFailed(check: unknown): boolean {
+  if (!isRecord(check)) return false;
+  if (check["__typename"] === "StatusContext") {
+    return check["state"] === "FAILURE" || check["state"] === "ERROR";
+  }
+  return (
+    typeof check["conclusion"] === "string" &&
+    FAILING_CONCLUSIONS.includes(check["conclusion"])
   );
 }
 
@@ -494,10 +530,7 @@ function parsePrView(stdout: string): PrView | null {
         number: parsed["number"],
         url: parsed["url"],
         draft: parsed["isDraft"] === true,
-        checksPassed:
-          Array.isArray(checks) &&
-          checks.length > 0 &&
-          checks.every(checkPassed),
+        checks: checksState(checks),
       };
     }
   } catch {
@@ -515,7 +548,12 @@ function mergeBlocker(pr: PrView, push: PushInfo): string | null {
   if (!push.destExists) return "Branch is not pushed";
   if (!push.ff) return "origin has commits this branch lacks";
   if (push.unpushed > 0) return "Local has unpushed commits";
-  if (!pr.checksPassed) return "Checks have not all passed";
+  // Checks that do not exist are not checks that failed: a repository without
+  // CI merges straight away, and where required checks exist but have not
+  // started, GitHub itself refuses the merge.
+  if (pr.checks === "failed" || pr.checks === "pending") {
+    return "Checks have not all passed";
+  }
   return null;
 }
 
@@ -557,6 +595,7 @@ function prEntry(pr: PrView, push: PushInfo): PrEntry {
   return {
     number: pr.number,
     url: pr.url,
+    checks: pr.checks,
     destExists: push.destExists,
     unpushed: push.unpushed,
     ff: push.ff,
@@ -566,18 +605,23 @@ function prEntry(pr: PrView, push: PushInfo): PrEntry {
 
 // The open PR and push state of one worktree, read in the worktree's folder,
 // with the key that the PR cache and the rows use.
-async function readPushAndPr(
-  w: Worktree,
-): Promise<{ key: string; pr: PrView | null; push: PushInfo }> {
+async function readPushAndPr(w: Worktree): Promise<{
+  key: string;
+  pr: PrView | null;
+  push: PushInfo;
+  repo: string | null;
+}> {
   const key = `${w.repo}\0${w.name}`;
-  const [viewed, push] = await Promise.all([
+  const [viewed, push, remote] = await Promise.all([
     runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
     pushInfo(w.path, w.name),
+    runCmd("git", ["remote", "get-url", "origin"], w.path),
   ]);
   return {
     key,
     pr: viewed.code === 0 ? parsePrView(viewed.stdout) : null,
     push,
+    repo: remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null,
   };
 }
 
@@ -987,8 +1031,8 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       const entries = await Promise.all(
         worktrees.map(async (w) => {
-          const { key, pr, push } = await readPushAndPr(w);
-          return [key, pr ? prEntry(pr, push) : push] as const;
+          const { key, pr, push, repo } = await readPushAndPr(w);
+          return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
         }),
       );
       const map: Record<string, PrEntry> = {};
@@ -1116,12 +1160,12 @@ export default function createTimber(host: unknown, web: Web) {
             (w) => w.repo === repo && w.name === name,
           );
           if (found) {
-            const { key, pr, push } = await readPushAndPr(found);
+            const { key, pr, push, repo } = await readPushAndPr(found);
             prCache = {
               at: Date.now(),
               map: {
                 ...(prCache?.map ?? {}),
-                [key]: pr ? prEntry(pr, push) : push,
+                [key]: { ...(pr ? prEntry(pr, push) : push), repo },
               },
             };
             try {
