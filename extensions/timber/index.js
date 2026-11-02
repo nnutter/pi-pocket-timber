@@ -174,13 +174,11 @@ export default function setup(pocket) {
     const [source, setSource] = useState("");
     const [repoName, setRepoName] = useState("");
     const [alias, setAlias] = useState("");
-    const [confirmKey, setConfirmKey] = useState(null);
     const [prWorktree, setPrWorktree] = useState(null);
     const [prTitle, setPrTitle] = useState("");
     const [prBody, setPrBody] = useState("");
     const [drafting, setDrafting] = useState(false);
     const draftRun = useRef(0);
-    const confirmTimer = useRef(null);
     const [mergeKey, setMergeKey] = useState(null);
     const mergeTimer = useRef(null);
     // The id of the open popover ("add"), or null. Each popover's anchor
@@ -338,18 +336,11 @@ export default function setup(pocket) {
 
     useEffect(
       () => () => {
-        if (confirmTimer.current) clearTimeout(confirmTimer.current);
         if (mergeTimer.current) clearTimeout(mergeTimer.current);
         draftRun.current += 1;
       },
       [],
     );
-
-    const armRemove = (key) => {
-      setConfirmKey(key);
-      if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      confirmTimer.current = setTimeout(() => setConfirmKey(null), 5000);
-    };
 
     const armMerge = (key) => {
       setMergeKey(key);
@@ -459,14 +450,9 @@ export default function setup(pocket) {
         : ` Archived ${archived.done} of ${many}.`;
     };
 
+    // One click removes: the server refuses a worktree that is dirty or not
+    // merged, so a stray tap cannot throw work away.
     const doRemove = async (worktree) => {
-      const key = `${worktree.repo}\0${worktree.name}`;
-      if (confirmKey !== key) {
-        armRemove(key);
-        return;
-      }
-      setConfirmKey(null);
-      if (confirmTimer.current) clearTimeout(confirmTimer.current);
       startAction(rowAction("remove", worktree));
       setNotice("");
       try {
@@ -1082,7 +1068,6 @@ export default function setup(pocket) {
         >
           ${rows.map((w) => {
             const key = rowKey(w);
-            const armed = confirmKey === key;
             const cachePr = data && data.prs ? data.prs[key] : null;
             // The open PR comes from the server's own `gh pr view` read in the
             // worktree's folder, so it also finds PRs made outside this page,
@@ -1278,18 +1263,14 @@ export default function setup(pocket) {
                       class="button small"
                       disabled=${toolbarBusy || rowBusy(w)}
                       aria-disabled=${listingBusy || undefined}
-                      title=${
-                        armed
-                          ? `Click again to delete ${w.name}@${w.repo} within 5s`
-                          : `Remove ${w.name}@${w.repo}`
-                      }
-                      aria-label=${armed ? `Confirm delete ${w.name}@${w.repo}` : `Remove ${w.name}@${w.repo}`}
+                      title=${`Remove ${w.name}@${w.repo}`}
+                      aria-label=${`Remove ${w.name}@${w.repo}`}
                       onClick=${() => {
                         if (!listingBusy) doRemove(w);
                       }}
-                      style=${armed ? { position: "absolute", right: "0", top: "50%", transform: "translateY(-50%)", zIndex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", boxShadow: "0 2px 12px rgba(0,0,0,0.45)", maxWidth: "100%", color: "var(--err)", fontWeight: "700" } : { ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
-                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, armed ? html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} /><span style=${{ marginLeft: "4px" }}>?</span>` : html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
+                      ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6" size=${16} />`)}
                     </button>`
                   }
                   ${
