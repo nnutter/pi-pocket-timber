@@ -1,6 +1,6 @@
 /**
- * Timber worktrees: list, create, open sessions in, and safely remove managed Git worktrees, archiving the sessions that worked in them, from a worktrees page, and from a panel on a wide screen.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, and open-or-create PR per worktree.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages, and from panels on a wide screen.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, and the TODO files that `timber todo --path` and `--repo` resolve.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
