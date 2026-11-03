@@ -7,17 +7,17 @@
     "name": "Nathan Nutter",
     "github": "nnutter"
   },
-  "version": "1.1.1",
+  "version": "1.2.0",
   "source": {
     "repo": "nnutter/pi-pocket-timber",
-    "commit": "583c6da7d404a10356a0a8be84ed5063d4605556",
+    "commit": "01749419880e9c40f7e4fca2cee7263ec42350d5",
     "path": "extensions"
   },
   "files": [
     {
       "name": "timber.ts",
-      "sha256": "202f3e3f27ff9e5bbacb58229db6eaea96819674ae5b1d3a542deb4ee0fd32ed",
-      "size": 65893
+      "sha256": "3654f7497b7b0199aa707916a17893be1f07e4fdbc7c8a8d427abcdbbf12b16f",
+      "size": 70927
     },
     {
       "name": "timber/index.js",
@@ -34,7 +34,8 @@
       "timber_create",
       "timber_remove",
       "timber_repo_add",
-      "timber_fetch"
+      "timber_fetch",
+      "timber_start_session"
     ],
     "readOnlyTools": [],
     "hooks": [],
