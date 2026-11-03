@@ -67,6 +67,8 @@ Write the sidecar again after the files change: it records their hashes.
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
   Note: timber's own ahead/behind counts against the base branch, so push state is measured directly with git and cached with the PR data
 - **Refresh**: lists worktrees and fetches the remotes of the repositories that have worktrees; auto-fetch every 5 minutes so merged branches flip to Merged.
+  It then re-reads every row's PR and push state, and answers when that read lands, so a push you made in a terminal turns the row's button into Merge or New PR by the time the spinner stops.
+  A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
 - Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked

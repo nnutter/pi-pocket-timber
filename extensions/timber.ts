@@ -75,7 +75,13 @@ let prCache: {
   at: number;
   map: Record<string, PrEntry>;
 } | null = null;
-let prRefreshing = false;
+// Whether a fetch has moved the refs a row's push state reads. The rows were
+// read before it, so their entries are older than it whatever their age.
+let prCacheStale = false;
+// The pass that reads every row, and whether a read that arrived while it ran
+// must repeat it: a pass that started before the change it was asked for cannot
+// answer for it.
+let prRefresh: { again: boolean; done: Promise<void> } | null = null;
 const PR_CACHE_TTL = 60_000;
 
 // A row after an action changed its worktree: the worktree as timber lists it
@@ -383,6 +389,9 @@ async function runFetch(): Promise<FetchRun> {
     });
     lastFetchAt = Date.now();
     lastFetchError = errors.length > 0 ? errors.join("; ") : null;
+    // The fetch moved origin/<branch>, which is what a row's push state reads,
+    // so every cached row is older than the fetch, whatever its age.
+    prCacheStale = true;
     return { fetchedAt: lastFetchAt, errors };
   } catch (error) {
     lastFetchError = error instanceof Error ? error.message : String(error);
@@ -1506,33 +1515,52 @@ export default function createTimber(host: unknown, web: Web) {
     const map: Record<string, PrEntry> = {};
     for (const [key, entry] of entries) map[key] = entry;
     prCache = { at: Date.now(), map };
+    prCacheStale = false;
   };
 
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
-  // immediately and only one refresh runs at a time.
+  // immediately and only one refresh runs at a time. A read asked for while one
+  // runs repeats the pass rather than joining it, so that a button drawn from
+  // the answer is never drawn from a read that began before the ask.
   const refreshPrCache = async (): Promise<void> => {
-    if (prRefreshing) return;
-    prRefreshing = true;
-    try {
-      await readPrEntries();
-      try {
-        web.send("fetched", { at: prCache?.at ?? Date.now() });
-      } catch {
-        // Tabs may be gone; the next poll picks up the fresh listing.
-      }
-    } catch {
-      // A timber read failed: the cache keeps what it had, and the next pass
-      // tries again.
-    } finally {
-      prRefreshing = false;
+    if (prRefresh) {
+      prRefresh.again = true;
+      return prRefresh.done;
     }
+    const run: { again: boolean; done: Promise<void> } = {
+      again: false,
+      done: Promise.resolve(),
+    };
+    prRefresh = run;
+    run.done = (async () => {
+      try {
+        do {
+          run.again = false;
+          try {
+            await readPrEntries();
+          } catch {
+            // A timber read failed: the cache keeps what it had, and the next
+            // pass tries again.
+            continue;
+          }
+          try {
+            web.send("fetched", { at: prCache?.at ?? Date.now() });
+          } catch {
+            // Tabs may be gone; the next poll picks up the fresh listing.
+          }
+        } while (run.again);
+      } finally {
+        prRefresh = null;
+      }
+    })();
+    return run.done;
   };
 
   web.route("GET", "state", async (): Promise<State & { models: string[] }> => {
     try {
       const listing = await readListing();
-      if (!prCache || Date.now() - prCache.at > PR_CACHE_TTL) {
+      if (!prCache || prCacheStale || Date.now() - prCache.at > PR_CACHE_TTL) {
         void refreshPrCache();
       }
       return {
@@ -1558,6 +1586,12 @@ export default function createTimber(host: unknown, web: Web) {
     async (): Promise<{ fetchedAt: number; errors: string[] }> => {
       try {
         const result = await fetchAllRepos();
+        // The fetch moved origin/<branch>, which is what a row's push state
+        // reads: read the rows again before answering, so the state the page
+        // reads next is current instead of a minute old. A pass already running
+        // repeats itself, so this answer is never a read that began before the
+        // fetch.
+        await refreshPrCache();
         try {
           web.send("fetched", { at: result.fetchedAt });
         } catch {
