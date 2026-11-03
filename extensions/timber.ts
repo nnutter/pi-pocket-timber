@@ -338,6 +338,16 @@ async function addRepository(
   return { repository: added[0], warnings: after.warnings };
 }
 
+// A destructive operation refuses a listing that reported diagnostics: what it
+// would act on may not be what timber described.
+function refuseOnWarnings(warnings: string[]): void {
+  if (warnings.length > 0) {
+    throw new Error(
+      "Listing reported diagnostics; refusing a destructive operation",
+    );
+  }
+}
+
 // `items` run through `run`, `limit` of them at a time, with the answers in
 // the order given. Each `timber git @repo -- fetch` waits on the network, so a
 // pass over every repository takes a burst of fetches rather than their sum;
@@ -937,11 +947,7 @@ async function removeWorktree(
     (w) => w.repo === repo && w.name === name,
   );
   if (!found) throw new Error(`Worktree not found: ${name}@${repo}`);
-  if (listing.warnings.length > 0) {
-    throw new Error(
-      "Listing reported diagnostics; refusing a destructive operation",
-    );
-  }
+  refuseOnWarnings(listing.warnings);
   const synced = (found.ahead ?? 0) === 0 && (found.behind ?? 0) === 0;
   if (found.statusError || !found.clean || (!found.merged && !synced)) {
     throw new Error(
