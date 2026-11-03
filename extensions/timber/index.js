@@ -119,6 +119,11 @@ export default function setup(pocket) {
   /** The action ids that rewrite the listing, so the toolbar and forms wait. */
   const TOOLBAR_ACTIONS = ["create", "add", "refresh"];
 
+  // Where a panel docks beside the conversation instead of covering it: the
+  // app's own breakpoint for its panels (`panelsBeside` in its `web/store.js`).
+  // A panel that docks leaves the session in view, so opening a session keeps it.
+  const PANEL_DOCKS = "(min-width: 1100px)";
+
   // Calls the app's own API as the person in this tab. The module's routes run
   // on the server, which cannot create or archive a session as a person; the
   // browser can, with the same calls the app's own pages make.
@@ -504,6 +509,22 @@ export default function setup(pocket) {
       }
     };
 
+    // Show a session, and put away the screen that was in its place. Current
+    // apps close an extension's page when their navigation shows a conversation,
+    // and an older one leaves the page over the session, so close it here too.
+    // A panel goes only where it covers the conversation: one docked beside it
+    // leaves room for the session the person just opened.
+    const showSession = (id) => {
+      pocket.openConversation(id);
+      pocket.closePage();
+      const docks =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia(PANEL_DOCKS).matches;
+      if (typeof pocket.closePanel === "function" && !docks) {
+        pocket.closePanel();
+      }
+    };
+
     // Start a plain session in a worktree's folder and show it. The app's own
     // endpoint creates it without a link to this session: a linked session
     // would make this one the root of an Agent Teams team, and the person is
@@ -518,7 +539,7 @@ export default function setup(pocket) {
       if (typeof target !== "number") {
         throw new Error("The session did not open.");
       }
-      pocket.openConversation(target);
+      showSession(target);
     };
 
     // The session a worktree already has, or null: the newest one in its folder
@@ -541,7 +562,7 @@ export default function setup(pocket) {
         // The sessions are unknown, so this starts one as it always did.
       }
       if (existing) {
-        pocket.openConversation(existing.id);
+        showSession(existing.id);
         return;
       }
       await startSession(worktree);
