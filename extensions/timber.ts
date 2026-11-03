@@ -42,10 +42,15 @@ type State = {
   prsAt: number | null;
 };
 
-// Last background `timber git @repo -- fetch` run. In-memory only: a reload refetches.
+// A pass of `timber git @repo -- fetch` over the repositories that have
+// worktrees. In-memory only: a reload fetches again.
+type FetchRun = { fetchedAt: number; errors: string[] };
 let lastFetchAt: number | null = null;
 let lastFetchError: string | null = null;
-let fetching = false;
+// The pass in flight. A second caller waits for it instead of reporting a fetch
+// that did not run: the pass moves the same refs to the same place, so its
+// answer is the caller's answer.
+let fetching: Promise<FetchRun> | null = null;
 
 // PR and push state per worktree (`repo\0name`), refreshed in
 // the background so every state poll doesn't fan out to `gh`. In-memory only.
@@ -70,7 +75,13 @@ let prCache: {
   at: number;
   map: Record<string, PrEntry>;
 } | null = null;
-let prRefreshing = false;
+// Whether a fetch has moved the refs a row's push state reads. The rows were
+// read before it, so their entries are older than it whatever their age.
+let prCacheStale = false;
+// The pass that reads every row, and whether a read that arrived while it ran
+// must repeat it: a pass that started before the change it was asked for cannot
+// answer for it.
+let prRefresh: { again: boolean; done: Promise<void> } | null = null;
 const PR_CACHE_TTL = 60_000;
 
 // A row after an action changed its worktree: the worktree as timber lists it
@@ -349,12 +360,17 @@ async function mapPool<T, R>(
 // How many repositories fetch at once.
 const FETCH_CONCURRENCY = 4;
 
-async function fetchAllRepos(): Promise<{
-  fetchedAt: number;
-  errors: string[];
-}> {
-  if (fetching) return { fetchedAt: lastFetchAt ?? Date.now(), errors: [] };
-  fetching = true;
+async function fetchAllRepos(): Promise<FetchRun> {
+  if (fetching) return fetching;
+  fetching = runFetch();
+  try {
+    return await fetching;
+  } finally {
+    fetching = null;
+  }
+}
+
+async function runFetch(): Promise<FetchRun> {
   try {
     const listing = await readListing();
     // Only a repository with worktrees can put a row on the page, and the fetch
@@ -373,12 +389,13 @@ async function fetchAllRepos(): Promise<{
     });
     lastFetchAt = Date.now();
     lastFetchError = errors.length > 0 ? errors.join("; ") : null;
+    // The fetch moved origin/<branch>, which is what a row's push state reads,
+    // so every cached row is older than the fetch, whatever its age.
+    prCacheStale = true;
     return { fetchedAt: lastFetchAt, errors };
   } catch (error) {
     lastFetchError = error instanceof Error ? error.message : String(error);
     throw error;
-  } finally {
-    fetching = false;
   }
 }
 
@@ -1484,37 +1501,67 @@ export default function createTimber(host: unknown, web: Web) {
     },
   });
 
+  // One pass over the rows: every worktree's PR and push state, read now. The
+  // list is read here rather than handed in, so a pass reads the rows that
+  // exist when it runs.
+  const readPrEntries = async (): Promise<void> => {
+    const listing = await readListing();
+    const entries = await Promise.all(
+      listing.worktrees.map(async (w) => {
+        const { key, pr, push, repo } = await readPushAndPr(w);
+        return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
+      }),
+    );
+    const map: Record<string, PrEntry> = {};
+    for (const [key, entry] of entries) map[key] = entry;
+    prCache = { at: Date.now(), map };
+    prCacheStale = false;
+  };
+
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
-  // immediately and only one refresh runs at a time.
-  const refreshPrCache = async (worktrees: Worktree[]): Promise<void> => {
-    if (prRefreshing) return;
-    prRefreshing = true;
-    try {
-      const entries = await Promise.all(
-        worktrees.map(async (w) => {
-          const { key, pr, push, repo } = await readPushAndPr(w);
-          return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
-        }),
-      );
-      const map: Record<string, PrEntry> = {};
-      for (const [key, entry] of entries) map[key] = entry;
-      prCache = { at: Date.now(), map };
-      try {
-        web.send("fetched", { at: prCache.at });
-      } catch {
-        // Tabs may be gone; the next poll picks up the fresh listing.
-      }
-    } finally {
-      prRefreshing = false;
+  // immediately and only one refresh runs at a time. A read asked for while one
+  // runs repeats the pass rather than joining it, so that a button drawn from
+  // the answer is never drawn from a read that began before the ask.
+  const refreshPrCache = async (): Promise<void> => {
+    if (prRefresh) {
+      prRefresh.again = true;
+      return prRefresh.done;
     }
+    const run: { again: boolean; done: Promise<void> } = {
+      again: false,
+      done: Promise.resolve(),
+    };
+    prRefresh = run;
+    run.done = (async () => {
+      try {
+        do {
+          run.again = false;
+          try {
+            await readPrEntries();
+          } catch {
+            // A timber read failed: the cache keeps what it had, and the next
+            // pass tries again.
+            continue;
+          }
+          try {
+            web.send("fetched", { at: prCache?.at ?? Date.now() });
+          } catch {
+            // Tabs may be gone; the next poll picks up the fresh listing.
+          }
+        } while (run.again);
+      } finally {
+        prRefresh = null;
+      }
+    })();
+    return run.done;
   };
 
   web.route("GET", "state", async (): Promise<State & { models: string[] }> => {
     try {
       const listing = await readListing();
-      if (!prCache || Date.now() - prCache.at > PR_CACHE_TTL) {
-        void refreshPrCache(listing.worktrees);
+      if (!prCache || prCacheStale || Date.now() - prCache.at > PR_CACHE_TTL) {
+        void refreshPrCache();
       }
       return {
         ...listing,
@@ -1539,6 +1586,12 @@ export default function createTimber(host: unknown, web: Web) {
     async (): Promise<{ fetchedAt: number; errors: string[] }> => {
       try {
         const result = await fetchAllRepos();
+        // The fetch moved origin/<branch>, which is what a row's push state
+        // reads: read the rows again before answering, so the state the page
+        // reads next is current instead of a minute old. A pass already running
+        // repeats itself, so this answer is never a read that began before the
+        // fetch.
+        await refreshPrCache();
         try {
           web.send("fetched", { at: result.fetchedAt });
         } catch {
@@ -1634,55 +1687,73 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  web.route("POST", "push", async ({ body }): Promise<{ pushed: boolean }> => {
-    try {
-      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-      const name = typeof body["name"] === "string" ? body["name"] : "";
-      checkRepoName(repo);
-      checkBranchName(name, "worktree name");
-      const listing = await readListing();
-      const found = listing.worktrees.find(
-        (w) => w.repo === repo && w.name === name,
-      );
-      if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
-      if (found.statusError) {
-        throw web.error(409, "Git status unknown; refresh and inspect first");
-      }
-      // Re-verify everything fresh: the panel's counts may be stale, and
-      // timber's ahead/behind counts against the base-branch upstream, not
-      // the push destination, so push state is measured directly with git.
-      const push = await pushInfo(found.path, name);
-      if (push.unpushed === 0) {
-        throw web.error(409, `Nothing to push for ${name}@${repo}`);
-      }
-      if (!push.ff) {
-        throw web.error(
-          409,
-          `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
+  web.route(
+    "POST",
+    "push",
+    async ({
+      body,
+    }): Promise<{
+      pushed: boolean;
+      state: WorktreeState | null;
+    }> => {
+      try {
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
         );
-      }
-      // Explicit refspec: works under any push.default, never touches the
-      // upstream config. Plain push already refuses non-fast-forwards, so a
-      // remote that moved since the check fails atomically instead of pushing.
-      const pushed = await runCmd(
-        "git",
-        ["push", "origin", `HEAD:${name}`],
-        found.path,
-        180_000,
-      );
-      if (pushed.code !== 0) {
-        throw new Error(
-          pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+        if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
+        if (found.statusError) {
+          throw web.error(409, "Git status unknown; refresh and inspect first");
+        }
+        // Re-verify everything fresh: the panel's counts may be stale, and
+        // timber's ahead/behind counts against the base-branch upstream, not
+        // the push destination, so push state is measured directly with git.
+        const push = await pushInfo(found.path, name);
+        if (push.unpushed === 0) {
+          throw web.error(409, `Nothing to push for ${name}@${repo}`);
+        }
+        if (!push.ff) {
+          throw web.error(
+            409,
+            `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
+          );
+        }
+        // Explicit refspec: works under any push.default, never touches the
+        // upstream config. Plain push already refuses non-fast-forwards, so a
+        // remote that moved since the check fails atomically instead of pushing.
+        const pushed = await runCmd(
+          "git",
+          ["push", "origin", `HEAD:${name}`],
+          found.path,
+          180_000,
         );
+        if (pushed.code !== 0) {
+          throw new Error(
+            pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+          );
+        }
+        // Read this row and no other, so its button shows what it can do now:
+        // merge the open PR, or open the create form. Emptying the cache would
+        // strip every other row of its PR until a pass landed.
+        let state: WorktreeState | null = null;
+        try {
+          state = await refreshWorktreeState(repo, name);
+        } catch {
+          // The row's cached entry stays dropped, so the next state poll reads it
+          // fresh.
+        }
+        return { pushed: true, state };
+      } catch (error) {
+        if (error instanceof Error && "status" in error) throw error;
+        const message = error instanceof Error ? error.message : "push failed";
+        throw web.error(502, message);
       }
-      prCache = null;
-      return { pushed: true };
-    } catch (error) {
-      if (error instanceof Error && "status" in error) throw error;
-      const message = error instanceof Error ? error.message : "push failed";
-      throw web.error(502, message);
-    }
-  });
+    },
+  );
 
   // Merge the open PR once it passes mergeBlocker. Git and gh are read fresh,
   // not from the panel's cache. --match-head-commit pins the merge to the
@@ -1806,10 +1877,12 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  // The sessions that work in a folder, for removing the worktree there: the
-  // page archives them as the person who asked, because a route cannot archive.
-  // Only those this person sees, and only those still in the list. A server
-  // older than 0.20.0 has no `sessions()` and answers none.
+  // The sessions that work in a folder, for removing the worktree there and for
+  // the row's open button, which shows the newest of them instead of starting a
+  // second session. The page archives them as the person who asked, because a
+  // route cannot archive. Only those this person sees, and only those still in
+  // the list, the newest first. A server older than 0.20.0 has no `sessions()`
+  // and answers none.
   web.route(
     "GET",
     "sessions",
@@ -1821,6 +1894,7 @@ export default function createTimber(host: unknown, web: Web) {
         sessions: request
           .sessions()
           .filter((session) => session.cwd === path && !session.archived)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
           .map((session) => ({ id: session.id, title: session.title })),
       };
     },

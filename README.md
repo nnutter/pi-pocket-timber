@@ -51,7 +51,9 @@ Write the sidecar again after the files change: it records their hashes.
 - **TODOs page** (rail + launcher), and a panel on a wide screen: the tasks of the worktree the session works in, with a picker for another worktree and a toggle for the list that its repository shares with every worktree of that repository.
   A task is added in one field, ticked to done, or removed with two taps; nested tasks stay indented, and done tasks are struck through.
   The items are the Markdown checkboxes of the worktree's `TODO.md`, or of the repository's `TODO.repo.md`: both live in the Git directory, not in the checkout, and `timber todo --path` and `timber todo --repo --path` resolve them.
-- **Open**: starts a plain session in the worktree's folder, titled `name@repo`.
+- **Open**: opens the worktree's session, or starts a plain one in its folder, titled `name@repo`, when the folder has none.
+  The session it opens is the newest one in that folder with that title, so opening a worktree again continues the work left in it, and a person's own session in the same folder does not take over the button.
+  The worktrees screen goes so that the session shows: the page at any width, and a panel too on a screen too narrow to dock it beside the conversation
   It is not linked to the session whose page it is: a linked session would make that one the root of a team, and a person opens a worktree to work in, not to orchestrate
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
@@ -65,6 +67,8 @@ Write the sidecar again after the files change: it records their hashes.
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
   Note: timber's own ahead/behind counts against the base branch, so push state is measured directly with git and cached with the PR data
 - **Refresh**: lists worktrees and fetches the remotes of the repositories that have worktrees; auto-fetch every 5 minutes so merged branches flip to Merged.
+  It then re-reads every row's PR and push state, and answers when that read lands, so a push you made in a terminal turns the row's button into Merge or New PR by the time the spinner stops.
+  A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
 - Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
