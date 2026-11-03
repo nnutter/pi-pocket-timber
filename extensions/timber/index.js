@@ -35,6 +35,16 @@ export default function setup(pocket) {
    */
   const REMOVE_COLOR = "#a4aaf3";
 
+  /** The box that a form, or a list of repositories, draws itself in. */
+  const BOXED = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    border: "1px solid var(--line)",
+    borderRadius: "4px",
+    padding: "10px",
+  };
+
   // The sort modes: the id that `sort` holds, the label, and the icon path.
   const SORT_MODES = [
     {
@@ -986,17 +996,7 @@ export default function setup(pocket) {
         }
         ${
           adding &&
-          html`<form
-            onSubmit=${doAdd}
-            style=${{
-              display: "flex",
-              flexDirection: "column",
-              gap: "8px",
-              border: "1px solid var(--line)",
-              borderRadius: "4px",
-              padding: "10px",
-            }}
-          >
+          html`<form onSubmit=${doAdd} style=${BOXED}>
             <label
               style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
             >
@@ -1049,17 +1049,7 @@ export default function setup(pocket) {
         }
         ${
           creating &&
-          html`<form
-            onSubmit=${doCreate}
-            style=${{
-              display: "flex",
-              flexDirection: "column",
-              gap: "8px",
-              border: "1px solid var(--line)",
-              borderRadius: "4px",
-              padding: "10px",
-            }}
-          >
+          html`<form onSubmit=${doCreate} style=${BOXED}>
             <label
               style=${{ display: "flex", flexDirection: "column", gap: "4px" }}
             >
@@ -1491,7 +1481,7 @@ export default function setup(pocket) {
                     }
                     void doPr(prWorktree, prTitle, prBody);
                   }}
-                  style=${{ display: "flex", flexDirection: "column", gap: "8px", border: "1px solid var(--line)", borderRadius: "4px", padding: "10px" }}
+                  style=${BOXED}
                 >
                   <strong
                     >Create PR for ${prWorktree.name}@${prWorktree.repo}</strong
