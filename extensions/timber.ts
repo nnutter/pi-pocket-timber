@@ -1687,55 +1687,73 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  web.route("POST", "push", async ({ body }): Promise<{ pushed: boolean }> => {
-    try {
-      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-      const name = typeof body["name"] === "string" ? body["name"] : "";
-      checkRepoName(repo);
-      checkBranchName(name, "worktree name");
-      const listing = await readListing();
-      const found = listing.worktrees.find(
-        (w) => w.repo === repo && w.name === name,
-      );
-      if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
-      if (found.statusError) {
-        throw web.error(409, "Git status unknown; refresh and inspect first");
-      }
-      // Re-verify everything fresh: the panel's counts may be stale, and
-      // timber's ahead/behind counts against the base-branch upstream, not
-      // the push destination, so push state is measured directly with git.
-      const push = await pushInfo(found.path, name);
-      if (push.unpushed === 0) {
-        throw web.error(409, `Nothing to push for ${name}@${repo}`);
-      }
-      if (!push.ff) {
-        throw web.error(
-          409,
-          `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
+  web.route(
+    "POST",
+    "push",
+    async ({
+      body,
+    }): Promise<{
+      pushed: boolean;
+      state: WorktreeState | null;
+    }> => {
+      try {
+        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
+        const name = typeof body["name"] === "string" ? body["name"] : "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        const listing = await readListing();
+        const found = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
         );
-      }
-      // Explicit refspec: works under any push.default, never touches the
-      // upstream config. Plain push already refuses non-fast-forwards, so a
-      // remote that moved since the check fails atomically instead of pushing.
-      const pushed = await runCmd(
-        "git",
-        ["push", "origin", `HEAD:${name}`],
-        found.path,
-        180_000,
-      );
-      if (pushed.code !== 0) {
-        throw new Error(
-          pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+        if (!found) throw web.error(404, `Worktree not found: ${name}@${repo}`);
+        if (found.statusError) {
+          throw web.error(409, "Git status unknown; refresh and inspect first");
+        }
+        // Re-verify everything fresh: the panel's counts may be stale, and
+        // timber's ahead/behind counts against the base-branch upstream, not
+        // the push destination, so push state is measured directly with git.
+        const push = await pushInfo(found.path, name);
+        if (push.unpushed === 0) {
+          throw web.error(409, `Nothing to push for ${name}@${repo}`);
+        }
+        if (!push.ff) {
+          throw web.error(
+            409,
+            `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
+          );
+        }
+        // Explicit refspec: works under any push.default, never touches the
+        // upstream config. Plain push already refuses non-fast-forwards, so a
+        // remote that moved since the check fails atomically instead of pushing.
+        const pushed = await runCmd(
+          "git",
+          ["push", "origin", `HEAD:${name}`],
+          found.path,
+          180_000,
         );
+        if (pushed.code !== 0) {
+          throw new Error(
+            pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+          );
+        }
+        // Read this row and no other, so its button shows what it can do now:
+        // merge the open PR, or open the create form. Emptying the cache would
+        // strip every other row of its PR until a pass landed.
+        let state: WorktreeState | null = null;
+        try {
+          state = await refreshWorktreeState(repo, name);
+        } catch {
+          // The row's cached entry stays dropped, so the next state poll reads it
+          // fresh.
+        }
+        return { pushed: true, state };
+      } catch (error) {
+        if (error instanceof Error && "status" in error) throw error;
+        const message = error instanceof Error ? error.message : "push failed";
+        throw web.error(502, message);
       }
-      prCache = null;
-      return { pushed: true };
-    } catch (error) {
-      if (error instanceof Error && "status" in error) throw error;
-      const message = error instanceof Error ? error.message : "push failed";
-      throw web.error(502, message);
-    }
-  });
+    },
+  );
 
   // Merge the open PR once it passes mergeBlocker. Git and gh are read fresh,
   // not from the panel's cache. --match-head-commit pins the merge to the

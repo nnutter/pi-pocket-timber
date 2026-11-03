@@ -658,16 +658,16 @@ export default function setup(pocket) {
       startAction(rowAction("push", worktree));
       setNotice("");
       try {
-        await pocket.api(
+        const result = await pocket.api(
           "push",
           { repo: worktree.repo, name: worktree.name },
           { method: "POST" },
         );
-        const state = await pocket.api("state");
-        setData(state);
-        setError(
-          state.fetchError ? `Fetch reported: ${state.fetchError}` : null,
-        );
+        // The server read this row again after the push, so its button shows
+        // what it can do now: merge the open PR, or open the create form. Every
+        // other row keeps what it had.
+        setData((previous) => withWorktreeState(previous, result.state));
+        setError(null);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Push failed");
       } finally {
