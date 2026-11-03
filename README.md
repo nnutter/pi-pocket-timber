@@ -53,6 +53,7 @@ Write the sidecar again after the files change: it records their hashes.
   The items are the Markdown checkboxes of the worktree's `TODO.md`, or of the repository's `TODO.repo.md`: both live in the Git directory, not in the checkout, and `timber todo --path` and `timber todo --repo --path` resolve them.
 - **Open**: opens the worktree's session, or starts a plain one in its folder, titled `name@repo`, when the folder has none.
   The session it opens is the newest one in that folder with that title, so opening a worktree again continues the work left in it, and a person's own session in the same folder does not take over the button.
+  The worktrees screen goes so that the session shows: the page at any width, and a panel too on a screen too narrow to dock it beside the conversation
   It is not linked to the session whose page it is: a linked session would make that one the root of a team, and a person opens a worktree to work in, not to orchestrate
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
