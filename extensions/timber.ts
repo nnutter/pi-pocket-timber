@@ -1492,27 +1492,38 @@ export default function createTimber(host: unknown, web: Web) {
     },
   });
 
+  // One pass over the rows: every worktree's PR and push state, read now. The
+  // list is read here rather than handed in, so a pass reads the rows that
+  // exist when it runs.
+  const readPrEntries = async (): Promise<void> => {
+    const listing = await readListing();
+    const entries = await Promise.all(
+      listing.worktrees.map(async (w) => {
+        const { key, pr, push, repo } = await readPushAndPr(w);
+        return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
+      }),
+    );
+    const map: Record<string, PrEntry> = {};
+    for (const [key, entry] of entries) map[key] = entry;
+    prCache = { at: Date.now(), map };
+  };
+
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time.
-  const refreshPrCache = async (worktrees: Worktree[]): Promise<void> => {
+  const refreshPrCache = async (): Promise<void> => {
     if (prRefreshing) return;
     prRefreshing = true;
     try {
-      const entries = await Promise.all(
-        worktrees.map(async (w) => {
-          const { key, pr, push, repo } = await readPushAndPr(w);
-          return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
-        }),
-      );
-      const map: Record<string, PrEntry> = {};
-      for (const [key, entry] of entries) map[key] = entry;
-      prCache = { at: Date.now(), map };
+      await readPrEntries();
       try {
-        web.send("fetched", { at: prCache.at });
+        web.send("fetched", { at: prCache?.at ?? Date.now() });
       } catch {
         // Tabs may be gone; the next poll picks up the fresh listing.
       }
+    } catch {
+      // A timber read failed: the cache keeps what it had, and the next pass
+      // tries again.
     } finally {
       prRefreshing = false;
     }
@@ -1522,7 +1533,7 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       const listing = await readListing();
       if (!prCache || Date.now() - prCache.at > PR_CACHE_TTL) {
-        void refreshPrCache(listing.worktrees);
+        void refreshPrCache();
       }
       return {
         ...listing,
