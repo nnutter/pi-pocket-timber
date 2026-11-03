@@ -56,6 +56,9 @@ Write the sidecar again after the files change: it records their hashes.
   The worktrees screen goes so that the session shows: the page at any width, and a panel too on a screen too narrow to dock it beside the conversation
   It is not linked to the session whose page it is: a linked session would make that one the root of a team, and a person opens a worktree to work in, not to orchestrate
 - **New worktree / Add repository** forms
+- **Repositories**: the toolbar's second button lists the registered repositories, with the number of worktrees each one has.
+  A row renames its repository in a field (`timber repo rename`), which moves the folders of that repository's worktrees with it, and a repository with no worktrees offers a removal (`timber repo remove`).
+  A repository that still has worktrees shows how many instead of a removal, because timber refuses to remove it
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
 - **Repository link**: the repository name in a row links to its page on GitHub, built from the worktree's `origin` remote; a worktree whose `origin` names no repository keeps the plain name
 - **PR link**: each row links its open pull request, right-aligned in the name row.
@@ -71,13 +74,16 @@ Write the sidecar again after the files change: it records their hashes.
   A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
-- Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+- Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
 
 ## Safety notes
 
 - Removal runs `timber remove` with no force flag, and only for worktrees that are clean with known status and merged (or 0 ahead / 0 behind).
 - Removal archives the sessions whose folder is the worktree's, so that no session is left in a folder that is gone.
   The page archives them as the signed-in person; a failure to archive leaves the removal done, and the notice says so.
+- A rename reaches a repository whose worktrees timber can plan a move for, and timber rolls a plan that fails partway back itself.
+  Its worktree folders move with it, so the sessions that worked in those folders keep the paths they had: the notice says so, and the row's open button starts a new session in the moved folder.
+- A removal runs `timber repo remove`, only for a repository with no worktrees; the page draws its button only for one, and the route refuses one that has them, with their names.
 - `timber pr create` names the base repository and branch from the branch's upstream, and refuses a branch GitHub does not have, with the push command to run.
   It never pushes, and it never changes the branch's upstream, so the extension removes neither; creating a PR no longer edits git config.
 - A TODO write changes one line of its file: it appends one `- [ ]` line, rewrites one marker, or drops one line.
