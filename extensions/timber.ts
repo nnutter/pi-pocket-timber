@@ -157,6 +157,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// A route's body holds what the page sent, untyped: a field that is not a
+// string reads as empty, as if the page had left it out.
+function textField(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  return typeof value === "string" ? value : "";
+}
+
 function isWorktree(value: unknown): value is Worktree {
   if (!isRecord(value)) return false;
   if (typeof value["name"] !== "string" || typeof value["repo"] !== "string")
@@ -1612,10 +1619,9 @@ export default function createTimber(host: unknown, web: Web) {
     "create",
     async ({ body }): Promise<{ worktree: Worktree; warnings: string[] }> => {
       try {
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
-        const upstream =
-          typeof body["upstream"] === "string" ? body["upstream"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
+        const upstream = textField(body, "upstream");
         return await createWorktree(repo, name, upstream);
       } catch (error) {
         const message =
@@ -1634,9 +1640,9 @@ export default function createTimber(host: unknown, web: Web) {
     "repositories",
     async ({ body }): Promise<{ repository: string; warnings: string[] }> => {
       try {
-        const source = typeof body["source"] === "string" ? body["source"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
-        const alias = typeof body["alias"] === "string" ? body["alias"] : "";
+        const source = textField(body, "source");
+        const name = textField(body, "name");
+        const alias = textField(body, "alias");
         return await addRepository(source, name, alias);
       } catch (error) {
         const message = error instanceof Error ? error.message : "add failed";
@@ -1659,10 +1665,10 @@ export default function createTimber(host: unknown, web: Web) {
       created: boolean;
     }> => {
       try {
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
-        const title = typeof body["title"] === "string" ? body["title"] : "";
-        const prBody = typeof body["body"] === "string" ? body["body"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
+        const title = textField(body, "title");
+        const prBody = textField(body, "body");
         const result = await openOrCreatePr(repo, name, title, prBody);
         // Warm the PR cache so the row can show the PR without waiting for the
         // next background refresh. This is the refresh's own read, so the entry
@@ -1697,8 +1703,8 @@ export default function createTimber(host: unknown, web: Web) {
       state: WorktreeState | null;
     }> => {
       try {
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
         checkRepoName(repo);
         checkBranchName(name, "worktree name");
         const listing = await readListing();
@@ -1769,8 +1775,8 @@ export default function createTimber(host: unknown, web: Web) {
       state: WorktreeState | null;
     }> => {
       try {
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
         checkRepoName(repo);
         checkBranchName(name, "worktree name");
         const listing = await readListing();
@@ -1936,8 +1942,8 @@ export default function createTimber(host: unknown, web: Web) {
   // as timber reads it now.
   web.route("POST", "todo-add", async ({ body }): Promise<TodoList> => {
     try {
-      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const repo = textField(body, "repo");
+      const name = textField(body, "name");
       const scope = todoScopeOf(body["scope"]);
       const title = checkTodoTitle(body["text"]);
       return await editTodoList(repo, name, scope, (path) => {
@@ -1951,8 +1957,8 @@ export default function createTimber(host: unknown, web: Web) {
   // POST todo-toggle: mark one item done, or open again.
   web.route("POST", "todo-toggle", async ({ body }): Promise<TodoList> => {
     try {
-      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const repo = textField(body, "repo");
+      const name = textField(body, "name");
       const scope = todoScopeOf(body["scope"]);
       const target = todoTarget(body);
       return await editTodoList(repo, name, scope, (path) => {
@@ -1971,8 +1977,8 @@ export default function createTimber(host: unknown, web: Web) {
   // POST todo-remove: drop one item's line.
   web.route("POST", "todo-remove", async ({ body }): Promise<TodoList> => {
     try {
-      const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-      const name = typeof body["name"] === "string" ? body["name"] : "";
+      const repo = textField(body, "repo");
+      const name = textField(body, "name");
       const scope = todoScopeOf(body["scope"]);
       const target = todoTarget(body);
       return await editTodoList(repo, name, scope, (path) => {
@@ -1988,8 +1994,8 @@ export default function createTimber(host: unknown, web: Web) {
     "remove",
     async ({ body }): Promise<{ removed: string }> => {
       try {
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
         return await removeWorktree(repo, name);
       } catch (error) {
         const message =
@@ -2018,8 +2024,8 @@ export default function createTimber(host: unknown, web: Web) {
       "pr-draft/:source",
       async (request) => {
         const { body } = request;
-        const repo = typeof body["repo"] === "string" ? body["repo"] : "";
-        const name = typeof body["name"] === "string" ? body["name"] : "";
+        const repo = textField(body, "repo");
+        const name = textField(body, "name");
         try {
           checkRepoName(repo);
           checkBranchName(name, "worktree name");
