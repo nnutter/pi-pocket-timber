@@ -29,6 +29,12 @@ export default function setup(pocket) {
     whiteSpace: "nowrap",
   };
 
+  /**
+   * The color of a removal, drawn to the row's background: a pale periwinkle
+   * that stays readable on it, where a dim shade would sink into it.
+   */
+  const REMOVE_COLOR = "#a4aaf3";
+
   // The sort modes: the id that `sort` holds, the label, and the icon path.
   const SORT_MODES = [
     {
@@ -77,9 +83,7 @@ export default function setup(pocket) {
    * color; a merge, the two reds and a removal wear the color itself.
    */
   function actionColor(action, w, checks) {
-    // Already drawn to the row's background: a pale periwinkle that stays
-    // readable on it, where a dim shade would sink into it.
-    if (action === "delete") return "#a4aaf3";
+    if (action === "delete") return REMOVE_COLOR;
     if (action === "merge") return "var(--ok)";
     if (action === "push" || action === "create-pr") {
       return dimShade(w.clean && !w.statusError ? "var(--ok)" : "var(--warn)");
