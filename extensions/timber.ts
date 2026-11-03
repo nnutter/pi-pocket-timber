@@ -1806,10 +1806,12 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  // The sessions that work in a folder, for removing the worktree there: the
-  // page archives them as the person who asked, because a route cannot archive.
-  // Only those this person sees, and only those still in the list. A server
-  // older than 0.20.0 has no `sessions()` and answers none.
+  // The sessions that work in a folder, for removing the worktree there and for
+  // the row's open button, which shows the newest of them instead of starting a
+  // second session. The page archives them as the person who asked, because a
+  // route cannot archive. Only those this person sees, and only those still in
+  // the list, the newest first. A server older than 0.20.0 has no `sessions()`
+  // and answers none.
   web.route(
     "GET",
     "sessions",
@@ -1821,6 +1823,7 @@ export default function createTimber(host: unknown, web: Web) {
         sessions: request
           .sessions()
           .filter((session) => session.cwd === path && !session.archived)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
           .map((session) => ({ id: session.id, title: session.title })),
       };
     },

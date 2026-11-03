@@ -59,6 +59,15 @@ export default function setup(pocket) {
   }
 
   /**
+   * The title a worktree's session has: its Timber name, so a row of sessions
+   * says which worktree each one is in, and the open button finds the session
+   * already in the worktree's folder.
+   */
+  function sessionTitle(w) {
+    return `${w.name}@${w.repo}`;
+  }
+
+  /**
    * The color of a row's one action button: green when the button can do its
    * job on a clean worktree, amber while the worktree is dirty or the pull
    * request's checks are still running, red when something is in the way, and
@@ -503,7 +512,7 @@ export default function setup(pocket) {
     const startSession = async (worktree) => {
       const payload = await callApp("sessions", {
         cwd: worktree.path,
-        title: `${worktree.name}@${worktree.repo}`,
+        title: sessionTitle(worktree),
       });
       const target = payload && payload.id;
       if (typeof target !== "number") {
@@ -512,11 +521,37 @@ export default function setup(pocket) {
       pocket.openConversation(target);
     };
 
+    // The session a worktree already has, or null: the newest one in its folder
+    // that is titled as the worktree is. A session a person started there by
+    // hand keeps the title the app gave it, so it is not the worktree's one.
+    const worktreeSession = async (worktree) => {
+      const title = sessionTitle(worktree);
+      const sessions = await folderSessions(worktree.path);
+      return sessions.find((session) => session.title === title) || null;
+    };
+
+    // Show a worktree's session: the one that already works there, so that a
+    // second tap continues the work left in it instead of hiding it behind a
+    // new session, else a new one.
+    const openSession = async (worktree) => {
+      let existing = null;
+      try {
+        existing = await worktreeSession(worktree);
+      } catch {
+        // The sessions are unknown, so this starts one as it always did.
+      }
+      if (existing) {
+        pocket.openConversation(existing.id);
+        return;
+      }
+      await startSession(worktree);
+    };
+
     const doOpen = async (worktree) => {
       startAction(rowAction("open", worktree));
       setNotice("");
       try {
-        await startSession(worktree);
+        await openSession(worktree);
       } catch (failure) {
         setError(failure && failure.message ? failure.message : "Open failed");
       } finally {
