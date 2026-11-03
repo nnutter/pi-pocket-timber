@@ -42,10 +42,15 @@ type State = {
   prsAt: number | null;
 };
 
-// Last background `timber git @repo -- fetch` run. In-memory only: a reload refetches.
+// A pass of `timber git @repo -- fetch` over the repositories that have
+// worktrees. In-memory only: a reload fetches again.
+type FetchRun = { fetchedAt: number; errors: string[] };
 let lastFetchAt: number | null = null;
 let lastFetchError: string | null = null;
-let fetching = false;
+// The pass in flight. A second caller waits for it instead of reporting a fetch
+// that did not run: the pass moves the same refs to the same place, so its
+// answer is the caller's answer.
+let fetching: Promise<FetchRun> | null = null;
 
 // PR and push state per worktree (`repo\0name`), refreshed in
 // the background so every state poll doesn't fan out to `gh`. In-memory only.
@@ -349,12 +354,17 @@ async function mapPool<T, R>(
 // How many repositories fetch at once.
 const FETCH_CONCURRENCY = 4;
 
-async function fetchAllRepos(): Promise<{
-  fetchedAt: number;
-  errors: string[];
-}> {
-  if (fetching) return { fetchedAt: lastFetchAt ?? Date.now(), errors: [] };
-  fetching = true;
+async function fetchAllRepos(): Promise<FetchRun> {
+  if (fetching) return fetching;
+  fetching = runFetch();
+  try {
+    return await fetching;
+  } finally {
+    fetching = null;
+  }
+}
+
+async function runFetch(): Promise<FetchRun> {
   try {
     const listing = await readListing();
     // Only a repository with worktrees can put a row on the page, and the fetch
@@ -377,8 +387,6 @@ async function fetchAllRepos(): Promise<{
   } catch (error) {
     lastFetchError = error instanceof Error ? error.message : String(error);
     throw error;
-  } finally {
-    fetching = false;
   }
 }
 
