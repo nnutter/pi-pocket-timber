@@ -51,7 +51,8 @@ Write the sidecar again after the files change: it records their hashes.
 - **TODOs page** (rail + launcher), and a panel on a wide screen: the tasks of the worktree the session works in, with a picker for another worktree and a toggle for the list that its repository shares with every worktree of that repository.
   A task is added in one field, ticked to done, or removed with two taps; nested tasks stay indented, and done tasks are struck through.
   The items are the Markdown checkboxes of the worktree's `TODO.md`, or of the repository's `TODO.repo.md`: both live in the Git directory, not in the checkout, and `timber todo --path` and `timber todo --repo --path` resolve them.
-- **Open**: starts a linked session in the worktree's folder
+- **Open**: starts a plain session in the worktree's folder, titled `name@repo`.
+  It is not linked to the session whose page it is: a linked session would make that one the root of a team, and a person opens a worktree to work in, not to orchestrate
 - **New worktree / Add repository** forms
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it
 - **Repository link**: the repository name in a row links to its page on GitHub, built from the worktree's `origin` remote; a worktree whose `origin` names no repository keeps the plain name
@@ -66,7 +67,7 @@ Write the sidecar again after the files change: it records their hashes.
 - **Refresh**: lists worktrees and fetches the remotes of the repositories that have worktrees; auto-fetch every 5 minutes so merged branches flip to Merged.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
-- Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`
+- Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
 
 ## Safety notes
 

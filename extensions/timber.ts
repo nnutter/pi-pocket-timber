@@ -1,13 +1,13 @@
 /**
- * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages, and from panels on a wide screen.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, and the TODO files that `timber todo --path` and `--repo` resolve.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages, from panels on a wide screen, and from Pi's tools.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import type { Web } from "./_pocket.d.ts";
+import type { LinkedSessions, Web } from "./_pocket.d.ts";
 
 const execFileAsync = promisify(execFileCb);
 
@@ -1361,6 +1361,129 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
+  // A session in a worktree's folder, linked to this one, so that Pi can send it
+  // the next message and read what it sends back. The page's Open button starts
+  // a plain session instead: a person opens a worktree to work in, not to
+  // orchestrate. Nothing creates a worktree here: `timber_create` does that.
+  const timberStartSession = defineTool({
+    name: "timber_start_session",
+    description:
+      "Start a session in a Timber worktree's folder, linked to this session, with its first message. Refuses a worktree that does not exist: use timber_create first.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Worktree/branch name" }),
+      message: Type.String({
+        description:
+          "The new session's first message: everything that it needs, since it does not see this conversation",
+      }),
+      repo: Type.Optional(
+        Type.String({
+          description:
+            "Registered repo, e.g. nnutter/timber; needed when two repos have a worktree of that name",
+        }),
+      ),
+      title: Type.Optional(
+        Type.String({ description: "Its title; the default is name@repo" }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "provider/modelId, one of the models the owner allows for subagents; left out, this session's model",
+        }),
+      ),
+      thinking: Type.Optional(
+        Type.String({
+          description:
+            "A thinking level (off, minimal, low, medium, high, xhigh, max); left out, this session's level",
+        }),
+      ),
+    }),
+    // A start carries the call's own key, so a replay finds the session of the
+    // first run instead of starting a second one.
+    replay: "safe",
+    execute: async (args, api) => {
+      const reply = (said: string) => ({
+        output: [{ type: "text" as const, text: said }],
+      });
+
+      const name = args.name.trim();
+      if (name === "") {
+        throw new Error("timber_start_session needs a worktree name.");
+      }
+      const message = args.message.trim();
+      if (message === "") {
+        throw new Error("timber_start_session needs a first message.");
+      }
+
+      const linked = (host as { linkedSessions?: LinkedSessions })
+        .linkedSessions;
+      if (linked === undefined) {
+        throw new Error(
+          "This Pi Pocket cannot start a linked session. Ask the owner to restart the server.",
+        );
+      }
+
+      const listing = await readListing();
+      const named = listing.worktrees.filter(
+        (worktree) =>
+          worktree.name === name && (!args.repo || worktree.repo === args.repo),
+      );
+      if (named.length !== 1) {
+        throw new Error(
+          named.length === 0
+            ? `No worktree is named ${name}${args.repo ? ` in ${args.repo}` : ""}. Look one up with timber_list, or make it with timber_create.`
+            : `${named.length} worktrees are named ${name}: ${named.map((worktree) => `${worktree.name}@${worktree.repo}`).join(", ")}. Pass repo.`,
+        );
+      }
+      const worktree = named[0] as Worktree;
+
+      // The owner's list of models for subagents is the only choice while it
+      // has any, so name them here: the refusal from the start names no rule.
+      const allowed = allowedModels();
+      if (
+        args.model !== undefined &&
+        allowed.length > 0 &&
+        !allowed.includes(args.model)
+      ) {
+        throw new Error(
+          `The owner allows these models: ${allowed.join(", ")}. Pass one of them as model.`,
+        );
+      }
+
+      let address: string;
+      try {
+        ({ address } = await linked.start(
+          api.conversationId,
+          {
+            title:
+              (args.title ?? "").trim() || `${worktree.name}@${worktree.repo}`,
+            message,
+            model: args.model,
+            thinking: args.thinking,
+            cwd: worktree.path,
+          },
+          `${api.taskId}:${api.callId}`,
+        ));
+      } catch (error) {
+        // Pi Pocket says what went wrong; what Pi can do about it is this
+        // tool's to say.
+        const why = error instanceof Error ? error.message : String(error);
+        const status = (error as { status?: unknown } | null)?.status;
+        throw new Error(
+          status === 413
+            ? `${why} Send a shorter first message.`
+            : // The fix is Pi's: a model from the owner's list.
+              (error as { choose?: unknown } | null)?.choose === true
+              ? why
+              : `${why} Do not look for a way around it: stop and tell the person.`,
+        );
+      }
+
+      return reply(
+        `Started a linked session in ${worktree.name}@${worktree.repo} (${worktree.path}) as ${address}. It does not see this conversation: its first message is all it has. Send to that address for more, and ask it to send back what it finds, once.`,
+      );
+    },
+  });
+
   // Refresh the open-PR cache in the background and tell tabs to re-read
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time.
@@ -1911,6 +2034,13 @@ export default function createTimber(host: unknown, web: Web) {
 
   return defineExtension({
     name: "timber",
-    tools: [timberList, timberCreate, timberRemove, timberRepoAdd, timberFetch],
+    tools: [
+      timberList,
+      timberCreate,
+      timberRemove,
+      timberRepoAdd,
+      timberFetch,
+      timberStartSession,
+    ],
   });
 }
