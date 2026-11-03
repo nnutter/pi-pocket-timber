@@ -429,25 +429,33 @@ export default function setup(pocket) {
       }
     };
 
+    // The sessions that worked in a folder, as the server answers them: the
+    // ones this person sees, the archived ones left out.
+    const folderSessions = async (path) => {
+      const answer = await pocket.api(
+        `sessions?path=${encodeURIComponent(path)}`,
+      );
+      return (answer && answer.sessions) || [];
+    };
+
     // A session's folder is gone once its worktree is, so the sessions that
     // worked there go to the archive too: the app keeps them, and brings one
     // back when someone needs it. It answers how many it archived, of how many.
     const archiveSessions = async (path) => {
-      let answer;
+      let sessions;
       try {
-        answer = await pocket.api(`sessions?path=${encodeURIComponent(path)}`);
+        sessions = await folderSessions(path);
       } catch {
         // The sessions are unknown, so the notice says nothing about them.
         return null;
       }
-      const ids = ((answer && answer.sessions) || []).map(
-        (session) => session.id,
-      );
       const results = await Promise.allSettled(
-        ids.map((id) => callApp(`sessions/${id}`, { archived: true })),
+        sessions.map((session) =>
+          callApp(`sessions/${session.id}`, { archived: true }),
+        ),
       );
       return {
-        total: ids.length,
+        total: sessions.length,
         done: results.filter((result) => result.status === "fulfilled").length,
       };
     };
