@@ -56,7 +56,11 @@ export default function setup(pocket) {
       label: "Activity",
       d: "M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm7-3.25v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5a.75.75 0 0 1 1.5 0Z",
     },
-    { id: "repo", label: "Repository Name", d: REPO_ICON },
+    {
+      id: "repo",
+      label: "Repository Name",
+      d: REPO_ICON,
+    },
     {
       id: "name",
       label: "Worktree Name",
@@ -72,6 +76,11 @@ export default function setup(pocket) {
   /** The action id for a verb on one worktree row. */
   function rowAction(verb, w) {
     return `${verb}\0${rowKey(w)}`;
+  }
+
+  /** The action id for a verb on one registered repository. */
+  function repoAction(verb, repo) {
+    return `${verb}\0${repo}`;
   }
 
   /**
@@ -129,6 +138,9 @@ export default function setup(pocket) {
 
   /** The verbs whose ids name one worktree's row actions. */
   const ROW_VERBS = ["open", "pr", "push", "merge", "remove"];
+
+  /** The verbs whose ids name one registered repository's actions. */
+  const REPO_VERBS = ["repo-rename", "repo-remove"];
 
   /** The action ids that rewrite the listing, so the toolbar and forms wait. */
   const TOOLBAR_ACTIONS = ["create", "add", "refresh"];
@@ -225,6 +237,9 @@ export default function setup(pocket) {
     /** True while an action runs on this worktree's row. */
     const rowBusy = (w) =>
       ROW_VERBS.some((verb) => running.has(rowAction(verb, w)));
+    /** True while an action runs on this registered repository. */
+    const repoBusy = (repo) =>
+      REPO_VERBS.some((verb) => running.has(repoAction(verb, repo)));
     // True while a background list reload is in flight. Row buttons lock
     // so a tap can't land on a row that is about to move.
     const [listingBusy, setListingBusy] = useState(false);
@@ -244,6 +259,11 @@ export default function setup(pocket) {
     const [sort, setSort] = useState("recent");
     const [creating, setCreating] = useState(false);
     const [adding, setAdding] = useState(false);
+    // The list of registered repositories, and the one whose new name is being
+    // typed. Both are opened from the toolbar's menu.
+    const [showRepos, setShowRepos] = useState(false);
+    const [renaming, setRenaming] = useState(null);
+    const [renameTo, setRenameTo] = useState("");
     const [createRepo, setCreateRepo] = useState("");
     const [name, setName] = useState("");
     const [upstream, setUpstream] = useState("");
@@ -454,6 +474,68 @@ export default function setup(pocket) {
         setError(failure && failure.message ? failure.message : "Add failed");
       } finally {
         endAction("add");
+      }
+    };
+
+    // A rename moves the folder of every worktree of the repository, so the
+    // sessions that worked in those folders keep the paths they had. The notice
+    // says so, because the Open button of a moved row starts a new session.
+    const doRenameRepo = async (repo) => {
+      const to = renameTo.trim();
+      if (!to) {
+        setError("Enter the new repository name.");
+        return;
+      }
+      startAction(repoAction("repo-rename", repo));
+      setNotice("");
+      try {
+        const result = await pocket.api(
+          "repo-rename",
+          { repo, to },
+          { method: "POST" },
+        );
+        const moved =
+          result.worktrees === 0
+            ? ""
+            : ` Moved ${result.worktrees} worktree folder${result.worktrees === 1 ? "" : "s"}; sessions in the old ones no longer open them.`;
+        setNotice(`Renamed ${result.from} to ${result.to}.${moved}`);
+        setRenaming(null);
+        setRenameTo("");
+        // The create form's picker held the old name, which is now no option.
+        setCreateRepo("");
+        setData(await pocket.api("state"));
+        setError(null);
+      } catch (failure) {
+        setError(
+          failure && failure.message ? failure.message : "Rename failed",
+        );
+      } finally {
+        endAction(repoAction("repo-rename", repo));
+      }
+    };
+
+    // One click removes: the server refuses a repository that still has
+    // worktrees, so the button is drawn only for one that does not.
+    const doRemoveRepo = async (repo) => {
+      startAction(repoAction("repo-remove", repo));
+      setNotice("");
+      try {
+        const result = await pocket.api(
+          "repo-remove",
+          { repo },
+          { method: "POST" },
+        );
+        setNotice(`Removed repository ${result.removed}.`);
+        setRenaming(null);
+        setCreateRepo("");
+        setData(await pocket.api("state"));
+        setError(null);
+      } catch (failure) {
+        setError(
+          failure && failure.message ? failure.message : "Remove failed",
+        );
+      } finally {
+        endAction(repoAction("repo-remove", repo));
       }
     };
 
@@ -846,8 +928,8 @@ export default function setup(pocket) {
               type="button"
               class="button small"
               disabled=${toolbarBusy}
-              title="More ways to add"
-              aria-label="More ways to add"
+              title="More actions"
+              aria-label="More actions"
               aria-haspopup="menu"
               aria-expanded=${openMenu === "add"}
               onClick=${() => setOpenMenu(openMenu === "add" ? null : "add")}
@@ -897,6 +979,31 @@ export default function setup(pocket) {
                   />
                 </svg>
                 <span>Import repo</span>
+              </button>
+              <span
+                aria-hidden="true"
+                style=${{ display: "block", height: "1px", margin: "4px 0", background: "var(--line)" }}
+              ></span>
+              <button
+                type="button"
+                role="menuitem"
+                style=${{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "8px 10px", border: "none", borderRadius: "4px", background: "transparent", color: "var(--text)", textAlign: "left", whiteSpace: "nowrap", cursor: "pointer" }}
+                onClick=${() => {
+                  setOpenMenu(null);
+                  setShowRepos(true);
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  style=${{ flexShrink: 0 }}
+                >
+                  <path d=${REPO_ICON} />
+                </svg>
+                <span>Repositories</span>
               </button>
             </div>`
           }
@@ -1106,6 +1213,119 @@ export default function setup(pocket) {
               </button>
             </div>
           </form>`
+        }
+        ${
+          showRepos &&
+          html`<div role="group" aria-label="Repositories" style=${BOXED}>
+            <div style=${{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <strong>Repositories</strong>
+              <button
+                type="button"
+                class="button small"
+                disabled=${toolbarBusy}
+                onClick=${() => {
+                  setShowRepos(false);
+                  setRenaming(null);
+                }}
+                style=${{ marginLeft: "auto", flex: "none" }}
+              >
+                Done
+              </button>
+            </div>
+            ${
+              data &&
+              data.repositories.length === 0 &&
+              html`<p class="small muted" style=${{ margin: "0" }}>
+                No repositories yet. Import one to start.
+              </p>`
+            }
+            ${(data ? data.repositories : []).map((repo) => {
+              const count = worktrees.filter((w) => w.repo === repo).length;
+              const busy = repoBusy(repo);
+              return html`<div
+                key=${repo}
+                style=${{ display: "flex", flexDirection: "column", gap: "6px", borderTop: "1px solid var(--line)", paddingTop: "8px" }}
+              >
+                <div
+                  style=${{ display: "flex", alignItems: "baseline", gap: "8px" }}
+                >
+                  <span style=${{ minWidth: "0", overflowWrap: "anywhere" }}
+                    >${repo}</span
+                  >
+                  <span
+                    class="small muted"
+                    style=${{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap" }}
+                    >${count === 0 ? "No worktrees" : `${count} worktree${count === 1 ? "" : "s"}`}</span
+                  >
+                </div>
+                <div style=${{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    class="button small"
+                    disabled=${toolbarBusy || busy}
+                    title=${`Rename ${repo}`}
+                    aria-label=${`Rename ${repo}`}
+                    aria-expanded=${renaming === repo}
+                    onClick=${() => {
+                      setRenameTo(repo);
+                      setRenaming(renaming === repo ? null : repo);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  ${
+                    count === 0 &&
+                    html`<button
+                      type="button"
+                      class="button small"
+                      disabled=${toolbarBusy || busy}
+                      title=${`Remove repository ${repo}`}
+                      aria-label=${`Remove repository ${repo}`}
+                      onClick=${() => doRemoveRepo(repo)}
+                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", padding: "0", color: REMOVE_COLOR }}
+                    >
+                      ${inFlight(repoAction("repo-remove", repo), `Remove repository ${repo}`, html`<${Icon} path=${TRASH_PATH} size=${14} />`)}
+                    </button>`
+                  }
+                </div>
+                ${
+                  renaming === repo &&
+                  html`<form
+                    onSubmit=${(event) => {
+                      event.preventDefault();
+                      if (toolbarBusy || busy) return;
+                      void doRenameRepo(repo);
+                    }}
+                    style=${{ display: "flex", flexDirection: "column", gap: "6px" }}
+                  >
+                    <input
+                      value=${renameTo}
+                      disabled=${toolbarBusy || busy}
+                      aria-label=${`New name for ${repo}`}
+                      onInput=${(e) => setRenameTo(e.target.value)}
+                    />
+                    <div style=${{ display: "flex", gap: "6px" }}>
+                      <button
+                        class="button primary"
+                        type="submit"
+                        disabled=${toolbarBusy || busy || !renameTo.trim()}
+                      >
+                        ${inFlight(repoAction("repo-rename", repo), `Rename ${repo}`, "Rename")}
+                      </button>
+                      <button
+                        class="button"
+                        type="button"
+                        disabled=${toolbarBusy || busy}
+                        onClick=${() => setRenaming(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>`
+                }
+              </div>`;
+            })}
+          </div>`
         }
         ${
           data &&
