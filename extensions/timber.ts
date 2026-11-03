@@ -338,6 +338,114 @@ async function addRepository(
   return { repository: added[0], warnings: after.warnings };
 }
 
+// A repository name as timber stores it: `timber repo list` prints the name it
+// trimmed and kept, so a name from the page compares against a listed one only
+// after the same trim.
+function storedRepoName(value: string): string {
+  const edges = /^\/+|\/+$/g;
+  return value
+    .trim()
+    .replace(edges, "")
+    .replace(/\.git$/, "")
+    .replace(edges, "");
+}
+
+// The reads of one repository's rows, dropped: the rows are gone, and what was
+// read for them cannot be shown for the rows that remain.
+function dropRepoEntries(repo: string): void {
+  if (!prCache) return;
+  const map: Record<string, PrEntry> = {};
+  for (const [key, entry] of Object.entries(prCache.map)) {
+    if (!key.startsWith(`${repo}\0`)) map[key] = entry;
+  }
+  prCache = { at: prCache.at, map };
+}
+
+// `timber repo rename` renames the bare repository and moves the folder of every
+// worktree it manages, so the paths of those worktrees change with it. A plan
+// that fails partway is rolled back by timber itself: this reads the listing
+// after the command and reports what it did and did not confirm.
+async function renameRepository(
+  repo: string,
+  to: string,
+): Promise<{
+  from: string;
+  to: string;
+  worktrees: number;
+  warnings: string[];
+}> {
+  checkRepoName(repo);
+  const target = cleanName(to);
+  if (!target) throw new Error("New repository name is empty");
+  checkRepoName(target);
+
+  const from = storedRepoName(repo);
+  const next = storedRepoName(target);
+  if (!next) throw new Error("New repository name is empty");
+
+  const before = await readListing();
+  refuseOnWarnings(before.warnings);
+  if (!before.repositories.includes(from)) {
+    throw new Error(`Repository is not registered: ${from}`);
+  }
+  if (next === from) {
+    throw new Error(`Repository is already named ${from}`);
+  }
+  if (before.repositories.includes(next)) {
+    throw new Error(`Repository is already registered: ${next}`);
+  }
+  const moved = before.worktrees.filter((w) => w.repo === from).length;
+
+  const result = await runTimber(["repo", "rename", from, next]);
+  const after = await readListing();
+  const renamed =
+    after.repositories.includes(next) && !after.repositories.includes(from);
+  if (result.code !== 0 || !renamed) {
+    const detail = result.stderr.trim() || `timber exited ${result.code}`;
+    throw new Error(
+      `Rename not confirmed; inspect the repositories before retrying. ${detail}`,
+    );
+  }
+  // The rows of this repository are listed under a new name now, so every cached
+  // read of them is older than the rename: the next state read reads them again.
+  prCacheStale = true;
+  return { from, to: next, worktrees: moved, warnings: after.warnings };
+}
+
+// `timber repo remove` drops a registered bare repository. It refuses one that
+// still has worktrees, and so does this: the worktrees of a repository are rows
+// that this page removes one at a time.
+async function removeRepository(repo: string): Promise<{ removed: string }> {
+  checkRepoName(repo);
+  const name = storedRepoName(repo);
+  if (!name) throw new Error("Repository is empty");
+
+  const before = await readListing();
+  refuseOnWarnings(before.warnings);
+  if (!before.repositories.includes(name)) {
+    throw new Error(`Repository is not registered: ${name}`);
+  }
+  const left = before.worktrees
+    .filter((w) => w.repo === name)
+    .map((w) => w.name);
+  if (left.length > 0) {
+    throw new Error(
+      `Repository still has worktrees (${left.join(", ")}); remove them first`,
+    );
+  }
+
+  const result = await runTimber(["repo", "remove", name]);
+  const after = await readListing();
+  if (result.code !== 0 || after.repositories.includes(name)) {
+    const detail = result.stderr.trim();
+    throw new Error(
+      `Removal not verified; inspect the repositories before retrying.${detail ? ` ${detail}` : ""}`,
+    );
+  }
+  dropRepoEntries(name);
+  return { removed: name };
+}
+
 // A destructive operation refuses a listing that reported diagnostics: what it
 // would act on may not be what timber described.
 function refuseOnWarnings(warnings: string[]): void {
@@ -1358,6 +1466,51 @@ const timberRepoAdd = defineTool({
   },
 });
 
+const timberRepoRename = defineTool({
+  name: "timber_repo_rename",
+  description:
+    "Rename a registered Timber repository. Timber moves the folders of its managed worktrees with it, so sessions in the old folders no longer open them.",
+  parameters: Type.Object({
+    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
+    to: Type.String({ description: "New name, e.g. nnutter/timber-archive" }),
+  }),
+  execute: async (args) => {
+    const renamed = await renameRepository(args.repo, args.to);
+    const moved =
+      renamed.worktrees === 0
+        ? ""
+        : ` and moved ${renamed.worktrees} worktree${renamed.worktrees === 1 ? "" : "s"}`;
+    return {
+      output: [
+        {
+          type: "text" as const,
+          text: `Renamed repository ${renamed.from} to ${renamed.to}${moved}${renamed.warnings.length ? `\nwarnings: ${renamed.warnings.join("\n")}` : ""}`,
+        },
+      ],
+    };
+  },
+});
+
+const timberRepoRemove = defineTool({
+  name: "timber_repo_remove",
+  description:
+    "Remove a registered Timber repository that has no worktrees. Refuses a repository that still has worktrees.",
+  parameters: Type.Object({
+    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
+  }),
+  execute: async (args) => {
+    const removed = await removeRepository(args.repo);
+    return {
+      output: [
+        {
+          type: "text" as const,
+          text: `Removed repository ${removed.removed}`,
+        },
+      ],
+    };
+  },
+});
+
 const timberFetch = defineTool({
   name: "timber_fetch",
   description:
@@ -1654,6 +1807,69 @@ export default function createTimber(host: unknown, web: Web) {
         const message = error instanceof Error ? error.message : "add failed";
         if (message.includes("Invalid") || message.includes("Credentials")) {
           throw web.error(422, message);
+        }
+        throw web.error(502, message);
+      }
+    },
+  );
+
+  // POST repo-rename: rename a registered repository, with the folders of its
+  // managed worktrees. Sessions that worked in those folders keep the paths they
+  // had, and the page says so.
+  web.route(
+    "POST",
+    "repo-rename",
+    async ({
+      body,
+    }): Promise<{
+      from: string;
+      to: string;
+      worktrees: number;
+      warnings: string[];
+    }> => {
+      try {
+        return await renameRepository(
+          textField(body, "repo"),
+          textField(body, "to"),
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "rename failed";
+        if (message.includes("not registered")) throw web.error(404, message);
+        if (message.includes("is empty") || message.includes("Invalid")) {
+          throw web.error(422, message);
+        }
+        if (
+          message.includes("already") ||
+          message.includes("diagnostics") ||
+          message.includes("still has worktrees")
+        ) {
+          throw web.error(409, message);
+        }
+        throw web.error(502, message);
+      }
+    },
+  );
+
+  // POST repo-remove: drop a registered repository that has no worktrees.
+  web.route(
+    "POST",
+    "repo-remove",
+    async ({ body }): Promise<{ removed: string }> => {
+      try {
+        return await removeRepository(textField(body, "repo"));
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "remove failed";
+        if (message.includes("not registered")) throw web.error(404, message);
+        if (message.includes("is empty") || message.includes("Invalid")) {
+          throw web.error(422, message);
+        }
+        if (
+          message.includes("diagnostics") ||
+          message.includes("still has worktrees")
+        ) {
+          throw web.error(409, message);
         }
         throw web.error(502, message);
       }
@@ -2125,6 +2341,8 @@ export default function createTimber(host: unknown, web: Web) {
       timberCreate,
       timberRemove,
       timberRepoAdd,
+      timberRepoRename,
+      timberRepoRemove,
       timberFetch,
       timberStartSession,
     ],
