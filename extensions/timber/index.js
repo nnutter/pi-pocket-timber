@@ -78,6 +78,11 @@ export default function setup(pocket) {
     return `${verb}\0${rowKey(w)}`;
   }
 
+  /** The action id for a verb on one PR of a worktree's stack. */
+  function stackAction(verb, w, number) {
+    return `${rowAction(verb, w)}\0${number}`;
+  }
+
   /** The action id for a verb on one registered repository. */
   function repoAction(verb, repo) {
     return `${verb}\0${repo}`;
@@ -234,9 +239,14 @@ export default function setup(pocket) {
     // lock the toolbar and the forms.
     const [running, setRunning] = useState(() => new Set());
     const toolbarBusy = TOOLBAR_ACTIONS.some((id) => running.has(id));
-    /** True while an action runs on this worktree's row. */
+    /** True while an action runs on this worktree's row, or on a PR in its stack. */
     const rowBusy = (w) =>
-      ROW_VERBS.some((verb) => running.has(rowAction(verb, w)));
+      ROW_VERBS.some((verb) => {
+        const base = rowAction(verb, w);
+        return [...running].some(
+          (id) => id === base || id.startsWith(`${base}\0`),
+        );
+      });
     /** True while an action runs on this registered repository. */
     const repoBusy = (repo) =>
       REPO_VERBS.some((verb) => running.has(repoAction(verb, repo)));
@@ -772,21 +782,31 @@ export default function setup(pocket) {
     };
 
     // One click merges: the server re-reads the PR and refuses it while a
-    // blocker stands, and it pins the merge to the head commit it just read,
-    // so a tap merges the PR the row shows.
-    const doMerge = async (worktree) => {
-      startAction(rowAction("merge", worktree));
+    // blocker stands. A stack line names its PR, and the server merges that PR
+    // and every PR below it; the top PR lands the whole stack. A single PR
+    // pins the merge to the head commit the server just read, so a tap merges
+    // the PR the row shows.
+    const doMerge = async (worktree, number = null) => {
+      const id =
+        number === null
+          ? rowAction("merge", worktree)
+          : stackAction("merge", worktree, number);
+      startAction(id);
       setNotice("");
       try {
-        const result = await pocket.api(
-          "merge",
-          { repo: worktree.repo, name: worktree.name },
-          { method: "POST" },
+        const body = { repo: worktree.repo, name: worktree.name };
+        if (number !== null) body.number = number;
+        const result = await pocket.api("merge", body, { method: "POST" });
+        setNotice(
+          result.whole
+            ? `Merged the whole stack (PR #${result.merged}).`
+            : result.stack
+              ? `Merged the stack up to PR #${result.merged}.`
+              : `Merged PR #${result.merged}.`,
         );
-        setNotice(`Merged PR #${result.merged}.`);
-        // The server read this row again after the merge, so its button shows
-        // what it can do now: delete, once the branch is merged. Every other
-        // row keeps what it had.
+        // The server read this row again after the merge, so its buttons show
+        // what they can do now: delete once every PR in the stack has merged,
+        // or merge the next PR. Every other row keeps what it had.
         setData((previous) => withWorktreeState(previous, result.state));
         setError(null);
       } catch (failure) {
@@ -800,7 +820,7 @@ export default function setup(pocket) {
           // Keep the reason on screen; the next poll re-reads the row.
         }
       } finally {
-        endAction(rowAction("merge", worktree));
+        endAction(id);
       }
     };
 
@@ -823,6 +843,13 @@ export default function setup(pocket) {
 
     const worktrees = (data && data.worktrees) || [];
     const needle = search.trim().toLowerCase();
+
+    // The stack a worktree's PR belongs to, or null. A stack shares one
+    // worktree, so it is one row, not one row per branch.
+    const stackOf = (w) => {
+      const entry = data && data.prs ? data.prs[rowKey(w)] : null;
+      return entry && entry.stack ? entry.stack : null;
+    };
 
     // The worktree the session this tab shows works in. Null when this tab
     // shows no session, or one that works somewhere else.
@@ -849,6 +876,8 @@ export default function setup(pocket) {
             ? `todo ${w.todoDone ?? 0}/${w.todoTotal}`
             : "",
           w.pullRequest || "",
+          ...(stackOf(w)?.prs.flatMap((pr) => [pr.branch, `#${pr.number}`]) ??
+            []),
         ];
         return fields.some((f) => f.toLowerCase().includes(needle));
       })
@@ -864,10 +893,175 @@ export default function setup(pocket) {
     // the sort say, so the row a person is working in does not move away.
     const rows = pinned ? [pinned, ...filtered] : filtered;
 
-    const safeToRemove = (w) =>
-      w.clean &&
-      !w.statusError &&
-      (w.merged || ((w.ahead ?? 0) === 0 && (w.behind ?? 0) === 0));
+    const safeToRemove = (w) => {
+      const stack = stackOf(w);
+      return (
+        w.clean &&
+        !w.statusError &&
+        (w.merged || ((w.ahead ?? 0) === 0 && (w.behind ?? 0) === 0)) &&
+        (!stack || stack.prs.every((pr) => pr.state === "MERGED"))
+      );
+    };
+
+    // The PRs of a worktree's stack, under the worktree's name. Each PR has its
+    // own link and merge button; the button's color says whether it can merge.
+    // The top PR lands the whole stack, and a lower PR merges up to itself.
+    const renderStackPr = (w, pr, stack) => {
+      // The server marks the PR of the branch this worktree checks out, which
+      // need not be named after the worktree.
+      const current = pr.current;
+      const top = pr === stack.prs[stack.prs.length - 1];
+      const merged = pr.state === "MERGED";
+      const closed = !merged && pr.state !== "OPEN";
+      const color = merged
+        ? "var(--magenta)"
+        : closed
+          ? "var(--faint)"
+          : pr.blocker === null
+            ? "var(--ok)"
+            : pr.checks === "failed"
+              ? "var(--err)"
+              : dimShade("var(--warn)");
+      const label = merged
+        ? `PR #${pr.number} merged`
+        : closed
+          ? `PR #${pr.number} closed`
+          : pr.blocker
+            ? `Cannot merge PR #${pr.number}: ${pr.blocker}`
+            : top
+              ? `Merge the whole stack (top PR #${pr.number})`
+              : `Merge the stack up to PR #${pr.number}`;
+      return html`<div
+        style=${{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 24px", alignItems: "center", gap: "8px", minHeight: "26px" }}
+      >
+        <span
+          style=${{ minWidth: "0", overflowWrap: "anywhere", fontSize: "12.5px", color: current ? "var(--text)" : "var(--muted)" }}
+        >
+          ${pr.branch}
+          ${
+            current &&
+            html`<span
+              title="Checked out in this worktree"
+              style=${{ marginLeft: "6px", padding: "0 5px", fontSize: "10px", color: "var(--accent)", border: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)", borderRadius: "999px" }}
+              >current</span
+            >`
+          }
+        </span>
+        <a
+          class="muted"
+          href=${pr.url}
+          target="_blank"
+          rel="noreferrer"
+          title=${pr.url}
+          style=${{ fontSize: "12.5px", whiteSpace: "nowrap", justifySelf: "end" }}
+          >PR #${pr.number}</a
+        >
+        ${
+          merged
+            ? html`<span
+                title="Merged"
+                aria-label="Merged"
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", color: "var(--magenta)" }}
+                ><${Icon} name="check" size=${15}
+              /></span>`
+            : closed
+              ? html`<span
+                  title="Closed"
+                  aria-label="Closed"
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", color: "var(--faint)" }}
+                  >–</span
+                >`
+              : html`<button
+                  type="button"
+                  class="button small"
+                  disabled=${toolbarBusy || rowBusy(w) || listingBusy || pr.blocker !== null}
+                  title=${label}
+                  aria-label=${label}
+                  onClick=${() => {
+                    if (!listingBusy) doMerge(w, pr.number);
+                  }}
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", minHeight: "0", padding: "0", flexShrink: 0, color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
+                >
+                  ${inFlight(
+                    stackAction("merge", w, pr.number),
+                    label,
+                    html`<svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                      style=${{ flexShrink: 0 }}
+                    >
+                      <path
+                        d="M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z"
+                      />
+                      <path
+                        d="M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z"
+                      />
+                      <path
+                        d="M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z"
+                      />
+                    </svg>`,
+                  )}
+                </button>`
+        }
+      </div>`;
+    };
+
+    const renderStack = (w, stack, cachePr) => {
+      const repo = (cachePr && cachePr.repo) || w.repo;
+      const url = `https://github.com/${repo}/stack/${stack.number}`;
+      const allMerged = stack.prs.every((pr) => pr.state === "MERGED");
+      return html`<div
+        style=${{ position: "relative", margin: "2px 0 2px 4px", paddingLeft: "14px" }}
+      >
+        <span
+          aria-hidden="true"
+          style=${{ position: "absolute", left: "3px", top: "3px", bottom: "3px", width: "1px", background: "linear-gradient(to bottom, color-mix(in srgb, var(--accent) 45%, transparent), var(--line))" }}
+        ></span>
+        <div
+          style=${{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", paddingBottom: "5px" }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+            style=${{ flexShrink: 0, color: "var(--accent)" }}
+          >
+            <path d="M3 4h18v2H3zM3 10h18v2H3zM3 16h12v2H3z" />
+          </svg>
+          <a
+            href=${url}
+            target="_blank"
+            rel="noreferrer"
+            title=${url}
+            style=${{ color: "var(--accent)", fontWeight: "600", fontSize: "12px", textDecoration: "none" }}
+            >Stack #${stack.number}</a
+          >
+          <span class="small muted" style=${{ fontSize: "11.5px" }}
+            >· ${stack.size} PRs</span
+          >
+          <span
+            class="small muted"
+            style=${{ fontSize: "11px", color: "var(--faint)" }}
+            >${allMerged ? "all merged" : "top PR merges all"}</span
+          >
+          <a
+            class="muted"
+            href=${url}
+            target="_blank"
+            rel="noreferrer"
+            title=${url}
+            style=${{ marginLeft: "auto", display: "inline-flex", flexShrink: 0 }}
+            ><${Icon} name="external" size=${13}
+          /></a>
+        </div>
+        ${stack.prs.map((pr) => renderStackPr(w, pr, stack))}
+      </div>`;
+    };
 
     if (!data && !error) {
       return html`<${Loader} label="Reading Timber" />`;
@@ -1341,6 +1535,7 @@ export default function setup(pocket) {
           ${rows.map((w) => {
             const key = rowKey(w);
             const cachePr = data && data.prs ? data.prs[key] : null;
+            const stack = cachePr && cachePr.stack ? cachePr.stack : null;
             // The open PR comes from the server's own `gh pr view` read in the
             // worktree's folder, so it also finds PRs made outside this page,
             // in a session or on GitHub itself.
@@ -1382,15 +1577,17 @@ export default function setup(pocket) {
                 ? "delete"
                 : canUpload
                   ? "push"
-                  : openPr
-                    ? mergeReason === null
-                      ? "merge"
-                      : "open-pr"
-                    : behindRemote
-                      ? "blocked"
-                      : w.statusError
-                        ? null
-                        : "create-pr";
+                  : stack
+                    ? null
+                    : openPr
+                      ? mergeReason === null
+                        ? "merge"
+                        : "open-pr"
+                      : behindRemote
+                        ? "blocked"
+                        : w.statusError
+                          ? null
+                          : "create-pr";
 
             // The color says what the one button will do, and whether it can.
             const actionStyle = {
@@ -1447,7 +1644,9 @@ export default function setup(pocket) {
                 </span>
                 ${
                   // Right-aligned, so the link sits in the same place on every
-                  // row and leaves the name as much room as it needs.
+                  // row and leaves the name as much room as it needs. A stack
+                  // row has no link here: each of its PRs links itself below.
+                  !stack &&
                   prLabel &&
                   (prUrl
                     ? html`<a
@@ -1467,6 +1666,7 @@ export default function setup(pocket) {
                       >`)
                 }
               </div>
+              ${stack && renderStack(w, stack, cachePr)}
               <div style=${{ display: "flex", alignItems: "center" }}>
                 <button
                   class="button small"
