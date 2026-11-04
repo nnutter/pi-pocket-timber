@@ -82,7 +82,10 @@ Write the sidecar again after the files change: it records their hashes.
   A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
-- Tools for Pi: `timber_list`, `timber_create`, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+- Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+- Rule for Pi: a session whose folder is a managed worktree is told which worktree it works in, and to open its pull request with `timber_pr_create` rather than `gh pr create`.
+  Sessions in other folders are told nothing: no worktree means no base branch or push to name.
+  Nothing blocks `gh`: a pull request that needs a reviewer, a label, or a stack is still gh's work.
 
 ## Safety notes
 
@@ -95,6 +98,7 @@ Write the sidecar again after the files change: it records their hashes.
 - A removal runs `timber repo remove`, only for a repository with no worktrees; the page draws its button only for one, and the route refuses one that has them, with their names.
 - `timber pr create` names the base repository and branch from the branch's upstream, and refuses a branch GitHub does not have, with the push command to run.
   It never pushes, and it never changes the branch's upstream, so the extension removes neither; creating a PR no longer edits git config.
+  `timber_pr_create` is the one exception to the missing push: it pushes the worktree's branch to `origin/<branch>` first when origin lacks it or is behind, the way `push.default = current` does, with an explicit refspec that never touches the upstream config and never forces.
 - A TODO write changes one line of its file: it appends one `- [ ]` line, rewrites one marker, or drops one line.
   An item is named by its line number and its text, so a file that changed under the panel is refused until the panel reads it again.
 - Removing a done task is possible here, although the `timber-todo` skill tells Pi to keep them; every other line of the file stays as it is.
