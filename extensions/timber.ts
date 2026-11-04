@@ -1025,7 +1025,9 @@ async function pushInfo(
 // that moved since the check fails atomically instead of pushing.
 async function pushBranch(w: Worktree): Promise<{ pushed: boolean }> {
   const push = await pushInfo(w.path, w.name);
-  if (push.unpushed === 0) return { pushed: false };
+  // A branch that origin lacks is nothing to report as unpushed: pushInfo counts
+  // against the upstream, which a branch without one cannot name.
+  if (push.destExists && push.unpushed === 0) return { pushed: false };
   if (!push.ff) {
     throw new Error(
       `${w.name}@${w.repo} is not a fast-forward over origin/${w.name}; fetch first`,
