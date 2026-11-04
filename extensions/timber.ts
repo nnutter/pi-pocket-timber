@@ -1,12 +1,17 @@
 /**
- * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, and read and merge the pull requests of a worktree's stack, from pages, from panels on a wide screen, and from Pi's tools.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, read and merge the pull requests of a worktree's stack, and open a worktree's pull request, from pages, from panels on a wide screen, and from Pi's tools, which a session in a worktree is told to use for its own pull request.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree (pushing the branch to `origin/<branch>` first when GitHub lacks it), the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import {
+  defineExtension,
+  defineTool,
+  section,
+} from "@earendil-works/pi-durable";
 import type { LinkedSessions, Web } from "./_pocket.d.ts";
 
 const execFileAsync = promisify(execFileCb);
@@ -278,6 +283,36 @@ async function readListing(): Promise<{
     if (t) warnings.push(t);
   }
   return { repositories, worktrees: parsed, warnings };
+}
+
+// The worktree a folder belongs to: the folder of a session that works in it,
+// or one of its subfolders.
+function worktreeAt(
+  worktrees: Worktree[],
+  folder: string,
+): Worktree | undefined {
+  const target = resolve(folder);
+  return worktrees.find((w) => {
+    const rest = relative(resolve(w.path), target);
+    return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
+  });
+}
+
+// The worktree a session works in, for its prompt section. Cached: a section
+// renders before every request, and a worktree moves under a session no more
+// often than timber lists it. In-memory only, so a reload reads it again.
+const WORKTREE_LOOKUP_TTL = 30_000;
+let worktreeLookup: { at: number; worktrees: Worktree[] } | null = null;
+
+async function worktreeOfFolder(folder: string): Promise<Worktree | undefined> {
+  if (
+    worktreeLookup === null ||
+    Date.now() - worktreeLookup.at > WORKTREE_LOOKUP_TTL
+  ) {
+    const listing = await readListing();
+    worktreeLookup = { at: Date.now(), worktrees: listing.worktrees };
+  }
+  return worktreeAt(worktreeLookup.worktrees, folder);
 }
 
 function formatWorktree(w: Worktree): string {
@@ -1019,6 +1054,34 @@ async function pushInfo(
   return { destExists, unpushed, ff: base.code === 0 };
 }
 
+// Push the worktree's branch to origin/<branch>, the head of its pull request.
+// An explicit refspec works under any push.default and never touches the
+// upstream config. Plain push already refuses non-fast-forwards, so a remote
+// that moved since the check fails atomically instead of pushing.
+async function pushBranch(w: Worktree): Promise<{ pushed: boolean }> {
+  const push = await pushInfo(w.path, w.name);
+  // A branch that origin lacks is nothing to report as unpushed: pushInfo counts
+  // against the upstream, which a branch without one cannot name.
+  if (push.destExists && push.unpushed === 0) return { pushed: false };
+  if (!push.ff) {
+    throw new Error(
+      `${w.name}@${w.repo} is not a fast-forward over origin/${w.name}; fetch first`,
+    );
+  }
+  const pushed = await runCmd(
+    "git",
+    ["push", "origin", `HEAD:${w.name}`],
+    w.path,
+    180_000,
+  );
+  if (pushed.code !== 0) {
+    throw new Error(
+      pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+    );
+  }
+  return { pushed: true };
+}
+
 // The cache entry for a worktree that has an open PR.
 function prEntry(pr: PrView, push: PushInfo, stack: StackInfo | null): PrEntry {
   return {
@@ -1196,6 +1259,26 @@ function timberMessage(stderr: string): string {
     );
 }
 
+// The base branch that a worktree's pull request targets, for a command that
+// must name it: the branch's upstream, or the remote head. Each failure says
+// what to pass instead, since `--base` names a base without either.
+async function baseBranch(w: Worktree): Promise<string> {
+  let target: { base: string };
+  try {
+    target = await prTarget(w.path, w.name);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "no base branch is known";
+    throw new Error(`${message} Pass base to name it.`);
+  }
+  if (target.base === w.name) {
+    throw new Error(
+      `${w.name}@${w.repo} tracks a branch of its own name, so it names no base branch. Pass base.`,
+    );
+  }
+  return target.base;
+}
+
 // A title and body for an empty form, from the commits the pull request would
 // carry, the way `gh pr create --fill` derives them: one commit describes
 // itself, and several title the pull request with the branch's name and list
@@ -1247,6 +1330,7 @@ async function openOrCreatePr(
   name: string,
   title: string,
   body: string,
+  options: { base?: string; draft?: boolean } = {},
 ): Promise<{ url: string; number: number; created: boolean }> {
   checkRepoName(repo);
   checkBranchName(name, "worktree name");
@@ -1269,7 +1353,9 @@ async function openOrCreatePr(
     `${name}@${repo}`,
     "--title",
     draft.title,
+    ...(options.base ? ["--base", options.base] : []),
     ...(draft.body.trim() ? ["--body", draft.body] : []),
+    ...(options.draft ? ["--draft"] : []),
   ]);
   const printed = prFromCreateOutput(created.stdout);
   if (created.code === 0 && printed) return { ...printed, created: true };
@@ -1793,6 +1879,28 @@ const timberFetch = defineTool({
   },
 });
 
+// The rule for a session that works in a Timber worktree. The tool is the
+// shorter way to a pull request than `gh pr create` once Pi knows that it is
+// there, and a session in a worktree is the one place where it fits. Sessions in
+// other folders get no text, so the section stays the same for them.
+const timberWorktreeRule = section("timber_worktree", async (input) => {
+  const folder = input.agent.cwd;
+  if (!folder) return undefined;
+  let found: Worktree | undefined;
+  try {
+    found = await worktreeOfFolder(folder);
+  } catch {
+    // A broken timber says nothing about the folder; it must not stop a request.
+    return undefined;
+  }
+  if (!found) return undefined;
+  return [
+    `This session works in the Timber worktree \`${found.name}@${found.repo}\`.`,
+    "Open its pull request with the `timber_pr_create` tool, which pushes the branch and runs `timber pr create`.",
+    "Do not run `gh pr create`: `gh` reads and merges pull requests here, and timber opens them.",
+  ].join("\n");
+});
+
 export default function createTimber(host: unknown, web: Web) {
   const allowedModels = (): string[] => {
     try {
@@ -1806,6 +1914,134 @@ export default function createTimber(host: unknown, web: Web) {
       return [];
     }
   };
+
+  // Show a row's new state at once: read this row and no other, so its button
+  // shows what it can do now, and tell the tabs. Best effort: the background
+  // refresh covers a failure.
+  const warmRow = async (repo: string, name: string): Promise<void> => {
+    try {
+      await refreshWorktreeState(repo, name);
+      try {
+        web.send("fetched", { at: Date.now() });
+      } catch {
+        // Tabs may be gone; the next poll picks up the listing.
+      }
+    } catch {
+      // Warming is best-effort; the background refresh covers it.
+    }
+  };
+
+  // The pull request of the worktree that Pi works in. It pushes the branch the
+  // way `push.default = current` does, to origin's branch of the same name, so
+  // that `gh pr create` is not the shorter way out: that command names neither
+  // the base branch nor the push, and the worktree's upstream is usually the
+  // base branch rather than the branch's destination.
+  const timberPrCreate = defineTool({
+    name: "timber_pr_create",
+    description:
+      "Open the pull request for a Timber worktree with `timber pr create`, after pushing its branch to origin/<branch> when origin lacks it or is behind. Defaults to the worktree of this session's folder. Use this instead of `gh pr create`.",
+    parameters: Type.Object({
+      title: Type.String({
+        description:
+          "Pull request title, one line of at most 72 characters, in the repository's commit subject style",
+      }),
+      body: Type.Optional(
+        Type.String({
+          description: "Pull request body, Markdown, brief and factual",
+        }),
+      ),
+      repo: Type.Optional(
+        Type.String({
+          description:
+            "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
+        }),
+      ),
+      name: Type.Optional(
+        Type.String({ description: "Worktree/branch name, with repo" }),
+      ),
+      base: Type.Optional(
+        Type.String({
+          description:
+            "Base branch; the branch's upstream branch, or origin's default branch",
+        }),
+      ),
+      draft: Type.Optional(
+        Type.Boolean({ description: "Open the pull request as a draft" }),
+      ),
+      push: Type.Optional(
+        Type.Boolean({
+          description:
+            "Push the branch first when origin lacks it or is behind (default true)",
+        }),
+      ),
+    }),
+    execute: async (args, api, context) => {
+      const title = args.title.trim();
+      if (title === "") {
+        throw new Error(
+          "timber_pr_create needs a title: the subject of the pull request.",
+        );
+      }
+
+      const listing = await readListing();
+      let worktree: Worktree | undefined;
+      if (args.repo !== undefined || args.name !== undefined) {
+        const repo = args.repo ?? "";
+        const name = args.name ?? "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        worktree = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!worktree) {
+          throw new Error(
+            `Worktree not found: ${name}@${repo}. Look one up with timber_list.`,
+          );
+        }
+      } else {
+        const folder = (await api.agent(context)).cwd;
+        if (!folder) {
+          throw new Error(
+            "This session has no folder, so pass repo and name to name the worktree.",
+          );
+        }
+        worktree = worktreeAt(listing.worktrees, folder);
+        if (!worktree) {
+          throw new Error(
+            `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
+          );
+        }
+      }
+
+      const pushed =
+        args.push === false ? { pushed: false } : await pushBranch(worktree);
+      // The base comes from the branch's upstream, so read it before anything
+      // makes the branch its own upstream: with `--base` the command needs no
+      // upstream at all. A branch that tracks its own name names no base.
+      const base = args.base ?? (await baseBranch(worktree));
+      const created = await openOrCreatePr(
+        worktree.repo,
+        worktree.name,
+        title,
+        args.body ?? "",
+        { base, draft: args.draft === true },
+      );
+      await warmRow(worktree.repo, worktree.name);
+
+      const pushedNote = pushed.pushed
+        ? ` Pushed origin/${worktree.name}.`
+        : "";
+      const verb = created.created ? "Created" : "Found";
+      return {
+        output: [
+          {
+            type: "text" as const,
+            text: `${verb} the pull request of ${worktree.name}@${worktree.repo} on base ${base}: ${created.url} (#${created.number}).${pushedNote}`,
+          },
+        ],
+      };
+    },
+  });
 
   // A session in a worktree's folder, linked to this one, so that Pi can send it
   // the next message and read what it sends back. The page's Open button starts
@@ -2158,20 +2394,7 @@ export default function createTimber(host: unknown, web: Web) {
         const title = textField(body, "title");
         const prBody = textField(body, "body");
         const result = await openOrCreatePr(repo, name, title, prBody);
-        // Warm the PR cache so the row can show the PR without waiting for the
-        // next background refresh. This is the refresh's own read, so the entry
-        // holds the real draft and check state; the pull request exists, so the
-        // read finds it.
-        try {
-          await refreshWorktreeState(repo, name);
-          try {
-            web.send("fetched", { at: Date.now() });
-          } catch {
-            // Tabs may be gone; the next poll picks up the listing.
-          }
-        } catch {
-          // Warming is best-effort; the background refresh covers it.
-        }
+        await warmRow(repo, name);
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : "pr failed";
@@ -2203,32 +2426,11 @@ export default function createTimber(host: unknown, web: Web) {
         if (found.statusError) {
           throw web.error(409, "Git status unknown; refresh and inspect first");
         }
-        // Re-verify everything fresh: the panel's counts may be stale, and
-        // timber's ahead/behind counts against the base-branch upstream, not
-        // the push destination, so push state is measured directly with git.
-        const push = await pushInfo(found.path, name);
-        if (push.unpushed === 0) {
+        // Re-verify everything fresh: the panel's counts may be stale, so push
+        // state is measured directly with git.
+        const { pushed } = await pushBranch(found);
+        if (!pushed) {
           throw web.error(409, `Nothing to push for ${name}@${repo}`);
-        }
-        if (!push.ff) {
-          throw web.error(
-            409,
-            `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
-          );
-        }
-        // Explicit refspec: works under any push.default, never touches the
-        // upstream config. Plain push already refuses non-fast-forwards, so a
-        // remote that moved since the check fails atomically instead of pushing.
-        const pushed = await runCmd(
-          "git",
-          ["push", "origin", `HEAD:${name}`],
-          found.path,
-          180_000,
-        );
-        if (pushed.code !== 0) {
-          throw new Error(
-            pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
-          );
         }
         // Read this row and no other, so its button shows what it can do now:
         // merge the open PR, or open the create form. Emptying the cache would
@@ -2244,6 +2446,9 @@ export default function createTimber(host: unknown, web: Web) {
       } catch (error) {
         if (error instanceof Error && "status" in error) throw error;
         const message = error instanceof Error ? error.message : "push failed";
+        if (message.includes("not a fast-forward")) {
+          throw web.error(409, message);
+        }
         throw web.error(502, message);
       }
     },
@@ -2705,9 +2910,11 @@ export default function createTimber(host: unknown, web: Web) {
 
   return defineExtension({
     name: "timber",
+    sections: [timberWorktreeRule],
     tools: [
       timberList,
       timberCreate,
+      timberPrCreate,
       timberRemove,
       timberRepoAdd,
       timberRepoRename,
