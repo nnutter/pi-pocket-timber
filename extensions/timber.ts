@@ -4,6 +4,7 @@
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -278,6 +279,19 @@ async function readListing(): Promise<{
     if (t) warnings.push(t);
   }
   return { repositories, worktrees: parsed, warnings };
+}
+
+// The worktree a folder belongs to: the folder of a session that works in it,
+// or one of its subfolders.
+function worktreeAt(
+  worktrees: Worktree[],
+  folder: string,
+): Worktree | undefined {
+  const target = resolve(folder);
+  return worktrees.find((w) => {
+    const rest = relative(resolve(w.path), target);
+    return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
+  });
 }
 
 function formatWorktree(w: Worktree): string {
@@ -1224,6 +1238,26 @@ function timberMessage(stderr: string): string {
     );
 }
 
+// The base branch that a worktree's pull request targets, for a command that
+// must name it: the branch's upstream, or the remote head. Each failure says
+// what to pass instead, since `--base` names a base without either.
+async function baseBranch(w: Worktree): Promise<string> {
+  let target: { base: string };
+  try {
+    target = await prTarget(w.path, w.name);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "no base branch is known";
+    throw new Error(`${message} Pass base to name it.`);
+  }
+  if (target.base === w.name) {
+    throw new Error(
+      `${w.name}@${w.repo} tracks a branch of its own name, so it names no base branch. Pass base.`,
+    );
+  }
+  return target.base;
+}
+
 // A title and body for an empty form, from the commits the pull request would
 // carry, the way `gh pr create --fill` derives them: one commit describes
 // itself, and several title the pull request with the branch's name and list
@@ -1275,6 +1309,7 @@ async function openOrCreatePr(
   name: string,
   title: string,
   body: string,
+  options: { base?: string; draft?: boolean } = {},
 ): Promise<{ url: string; number: number; created: boolean }> {
   checkRepoName(repo);
   checkBranchName(name, "worktree name");
@@ -1297,7 +1332,9 @@ async function openOrCreatePr(
     `${name}@${repo}`,
     "--title",
     draft.title,
+    ...(options.base ? ["--base", options.base] : []),
     ...(draft.body.trim() ? ["--body", draft.body] : []),
+    ...(options.draft ? ["--draft"] : []),
   ]);
   const printed = prFromCreateOutput(created.stdout);
   if (created.code === 0 && printed) return { ...printed, created: true };
@@ -1850,6 +1887,118 @@ export default function createTimber(host: unknown, web: Web) {
       // Warming is best-effort; the background refresh covers it.
     }
   };
+
+  // The pull request of the worktree that Pi works in. It pushes the branch the
+  // way `push.default = current` does, to origin's branch of the same name, so
+  // that `gh pr create` is not the shorter way out: that command names neither
+  // the base branch nor the push, and the worktree's upstream is usually the
+  // base branch rather than the branch's destination.
+  const timberPrCreate = defineTool({
+    name: "timber_pr_create",
+    description:
+      "Open the pull request for a Timber worktree with `timber pr create`, after pushing its branch to origin/<branch> when origin lacks it or is behind. Defaults to the worktree of this session's folder. Use this instead of `gh pr create`.",
+    parameters: Type.Object({
+      title: Type.String({
+        description:
+          "Pull request title, one line of at most 72 characters, in the repository's commit subject style",
+      }),
+      body: Type.Optional(
+        Type.String({
+          description: "Pull request body, Markdown, brief and factual",
+        }),
+      ),
+      repo: Type.Optional(
+        Type.String({
+          description:
+            "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
+        }),
+      ),
+      name: Type.Optional(
+        Type.String({ description: "Worktree/branch name, with repo" }),
+      ),
+      base: Type.Optional(
+        Type.String({
+          description:
+            "Base branch; the branch's upstream branch, or origin's default branch",
+        }),
+      ),
+      draft: Type.Optional(
+        Type.Boolean({ description: "Open the pull request as a draft" }),
+      ),
+      push: Type.Optional(
+        Type.Boolean({
+          description:
+            "Push the branch first when origin lacks it or is behind (default true)",
+        }),
+      ),
+    }),
+    execute: async (args, api, context) => {
+      const title = args.title.trim();
+      if (title === "") {
+        throw new Error(
+          "timber_pr_create needs a title: the subject of the pull request.",
+        );
+      }
+
+      const listing = await readListing();
+      let worktree: Worktree | undefined;
+      if (args.repo !== undefined || args.name !== undefined) {
+        const repo = args.repo ?? "";
+        const name = args.name ?? "";
+        checkRepoName(repo);
+        checkBranchName(name, "worktree name");
+        worktree = listing.worktrees.find(
+          (w) => w.repo === repo && w.name === name,
+        );
+        if (!worktree) {
+          throw new Error(
+            `Worktree not found: ${name}@${repo}. Look one up with timber_list.`,
+          );
+        }
+      } else {
+        const folder = (await api.agent(context)).cwd;
+        if (!folder) {
+          throw new Error(
+            "This session has no folder, so pass repo and name to name the worktree.",
+          );
+        }
+        worktree = worktreeAt(listing.worktrees, folder);
+        if (!worktree) {
+          throw new Error(
+            `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
+          );
+        }
+      }
+
+      const pushed =
+        args.push === false ? { pushed: false } : await pushBranch(worktree);
+      // The base comes from the branch's upstream, so read it before anything
+      // makes the branch its own upstream: with `--base` the command needs no
+      // upstream at all. A branch that tracks its own name names no base.
+      const base = args.base ?? (await baseBranch(worktree));
+      const created = await openOrCreatePr(
+        worktree.repo,
+        worktree.name,
+        title,
+        args.body ?? "",
+        { base, draft: args.draft === true },
+      );
+      await warmRow(worktree.repo, worktree.name);
+
+      const pushedNote = pushed.pushed
+        ? ` Pushed origin/${worktree.name}.`
+        : "";
+      const verb = created.created ? "Created" : "Found";
+      return {
+        output: [
+          {
+            type: "text" as const,
+            text: `${verb} the pull request of ${worktree.name}@${worktree.repo} on base ${base}: ${created.url} (#${created.number}).${pushedNote}`,
+          },
+        ],
+      };
+    },
+  });
 
   // A session in a worktree's folder, linked to this one, so that Pi can send it
   // the next message and read what it sends back. The page's Open button starts
@@ -2721,6 +2870,7 @@ export default function createTimber(host: unknown, web: Web) {
     tools: [
       timberList,
       timberCreate,
+      timberPrCreate,
       timberRemove,
       timberRepoAdd,
       timberRepoRename,
