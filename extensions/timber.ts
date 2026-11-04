@@ -1019,6 +1019,32 @@ async function pushInfo(
   return { destExists, unpushed, ff: base.code === 0 };
 }
 
+// Push the worktree's branch to origin/<branch>, the head of its pull request.
+// An explicit refspec works under any push.default and never touches the
+// upstream config. Plain push already refuses non-fast-forwards, so a remote
+// that moved since the check fails atomically instead of pushing.
+async function pushBranch(w: Worktree): Promise<{ pushed: boolean }> {
+  const push = await pushInfo(w.path, w.name);
+  if (push.unpushed === 0) return { pushed: false };
+  if (!push.ff) {
+    throw new Error(
+      `${w.name}@${w.repo} is not a fast-forward over origin/${w.name}; fetch first`,
+    );
+  }
+  const pushed = await runCmd(
+    "git",
+    ["push", "origin", `HEAD:${w.name}`],
+    w.path,
+    180_000,
+  );
+  if (pushed.code !== 0) {
+    throw new Error(
+      pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
+    );
+  }
+  return { pushed: true };
+}
+
 // The cache entry for a worktree that has an open PR.
 function prEntry(pr: PrView, push: PushInfo, stack: StackInfo | null): PrEntry {
   return {
@@ -2203,32 +2229,11 @@ export default function createTimber(host: unknown, web: Web) {
         if (found.statusError) {
           throw web.error(409, "Git status unknown; refresh and inspect first");
         }
-        // Re-verify everything fresh: the panel's counts may be stale, and
-        // timber's ahead/behind counts against the base-branch upstream, not
-        // the push destination, so push state is measured directly with git.
-        const push = await pushInfo(found.path, name);
-        if (push.unpushed === 0) {
+        // Re-verify everything fresh: the panel's counts may be stale, so push
+        // state is measured directly with git.
+        const { pushed } = await pushBranch(found);
+        if (!pushed) {
           throw web.error(409, `Nothing to push for ${name}@${repo}`);
-        }
-        if (!push.ff) {
-          throw web.error(
-            409,
-            `${name}@${repo} is not a fast-forward over origin/${name}; fetch first`,
-          );
-        }
-        // Explicit refspec: works under any push.default, never touches the
-        // upstream config. Plain push already refuses non-fast-forwards, so a
-        // remote that moved since the check fails atomically instead of pushing.
-        const pushed = await runCmd(
-          "git",
-          ["push", "origin", `HEAD:${name}`],
-          found.path,
-          180_000,
-        );
-        if (pushed.code !== 0) {
-          throw new Error(
-            pushed.stderr.trim() || `git push failed (exit ${pushed.code})`,
-          );
         }
         // Read this row and no other, so its button shows what it can do now:
         // merge the open PR, or open the create form. Emptying the cache would
@@ -2244,6 +2249,9 @@ export default function createTimber(host: unknown, web: Web) {
       } catch (error) {
         if (error instanceof Error && "status" in error) throw error;
         const message = error instanceof Error ? error.message : "push failed";
+        if (message.includes("not a fast-forward")) {
+          throw web.error(409, message);
+        }
         throw web.error(502, message);
       }
     },
