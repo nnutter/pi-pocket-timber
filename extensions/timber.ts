@@ -1,13 +1,17 @@
 /**
- * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, and read and merge the pull requests of a worktree's stack, from pages, from panels on a wide screen, and from Pi's tools.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, read and merge the pull requests of a worktree's stack, and open a worktree's pull request, from pages, from panels on a wide screen, and from Pi's tools, which a session in a worktree is told to use for its own pull request.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree (pushing the branch to `origin/<branch>` first when GitHub lacks it), the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import {
+  defineExtension,
+  defineTool,
+  section,
+} from "@earendil-works/pi-durable";
 import type { LinkedSessions, Web } from "./_pocket.d.ts";
 
 const execFileAsync = promisify(execFileCb);
@@ -292,6 +296,23 @@ function worktreeAt(
     const rest = relative(resolve(w.path), target);
     return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
   });
+}
+
+// The worktree a session works in, for its prompt section. Cached: a section
+// renders before every request, and a worktree moves under a session no more
+// often than timber lists it. In-memory only, so a reload reads it again.
+const WORKTREE_LOOKUP_TTL = 30_000;
+let worktreeLookup: { at: number; worktrees: Worktree[] } | null = null;
+
+async function worktreeOfFolder(folder: string): Promise<Worktree | undefined> {
+  if (
+    worktreeLookup === null ||
+    Date.now() - worktreeLookup.at > WORKTREE_LOOKUP_TTL
+  ) {
+    const listing = await readListing();
+    worktreeLookup = { at: Date.now(), worktrees: listing.worktrees };
+  }
+  return worktreeAt(worktreeLookup.worktrees, folder);
 }
 
 function formatWorktree(w: Worktree): string {
@@ -1858,6 +1879,28 @@ const timberFetch = defineTool({
   },
 });
 
+// The rule for a session that works in a Timber worktree. The tool is the
+// shorter way to a pull request than `gh pr create` once Pi knows that it is
+// there, and a session in a worktree is the one place where it fits. Sessions in
+// other folders get no text, so the section stays the same for them.
+const timberWorktreeRule = section("timber_worktree", async (input) => {
+  const folder = input.agent.cwd;
+  if (!folder) return undefined;
+  let found: Worktree | undefined;
+  try {
+    found = await worktreeOfFolder(folder);
+  } catch {
+    // A broken timber says nothing about the folder; it must not stop a request.
+    return undefined;
+  }
+  if (!found) return undefined;
+  return [
+    `This session works in the Timber worktree \`${found.name}@${found.repo}\`.`,
+    "Open its pull request with the `timber_pr_create` tool, which pushes the branch and runs `timber pr create`.",
+    "Do not run `gh pr create`: `gh` reads and merges pull requests here, and timber opens them.",
+  ].join("\n");
+});
+
 export default function createTimber(host: unknown, web: Web) {
   const allowedModels = (): string[] => {
     try {
@@ -2867,6 +2910,7 @@ export default function createTimber(host: unknown, web: Web) {
 
   return defineExtension({
     name: "timber",
+    sections: [timberWorktreeRule],
     tools: [
       timberList,
       timberCreate,
