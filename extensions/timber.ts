@@ -1,6 +1,6 @@
 /**
- * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, and read and edit the TODO list of a worktree or of its repository, from pages, from panels on a wide screen, and from Pi's tools.
- * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, and read and merge the pull requests of a worktree's stack, from pages, from panels on a wide screen, and from Pi's tools.
+ * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree, the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -70,6 +70,35 @@ type PrEntry = {
   // `owner/name` from the worktree's `origin` remote, for its link. Null when
   // the remote does not name one.
   repo?: string | null;
+  // The stack the open PR belongs to, or null when it is not in one. Set only
+  // with a PR. A stack shares one worktree: its branches are local branches of
+  // the repository, and only one of them is checked out.
+  stack?: StackInfo | null;
+};
+
+// One pull request in a stack. Position 1 is the branch closest to the stack's
+// base; the last position is the top, whose merge lands the whole stack.
+type StackPr = {
+  number: number;
+  url: string;
+  branch: string;
+  position: number;
+  state: string;
+  // Whether this is the branch checked out in the worktree.
+  current: boolean;
+  checks: ChecksState;
+  // Why this PR cannot merge yet, or null when it can. GitHub's answer alone:
+  // the branches of a stack other than the checked-out one have no local push
+  // state to measure.
+  blocker: string | null;
+};
+
+// The stack of a worktree's pull request.
+type StackInfo = {
+  number: number;
+  size: number;
+  base: string;
+  prs: StackPr[];
 };
 let prCache: {
   at: number;
@@ -162,6 +191,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function textField(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === "string" ? value : "";
+}
+
+// A positive whole number in a route's body, or null when the field is not
+// one. A stack's merge names the PR it merges; a row with no stack leaves it
+// out.
+function numberField(
+  body: Record<string, unknown>,
+  key: string,
+): number | null {
+  const value = body[key];
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : null;
 }
 
 function isWorktree(value: unknown): value is Worktree {
@@ -608,7 +650,7 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 
 // Fields `gh pr view` must return for parsePrView.
 const PR_VIEW_FIELDS =
-  "number,url,state,isDraft,statusCheckRollup,mergeStateStatus";
+  "number,url,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
 
 // What the pull request's checks are doing: all passed, at least one failed,
 // some still to finish (or queued), or none at all. "none" is not "no checks
@@ -623,6 +665,9 @@ type PrView = {
   // GitHub's own answer on whether the PR can merge now, in upper case; null
   // when this `gh` does not report it.
   mergeState: string | null;
+  // The branch that holds the PR's commits, which is the checked-out branch
+  // when this is the worktree's own PR.
+  branch: string;
 };
 
 const FAILING_CONCLUSIONS = [
@@ -679,6 +724,7 @@ function parsePrView(stdout: string): PrView | null {
     ) {
       const checks = parsed["statusCheckRollup"];
       const mergeState = parsed["mergeStateStatus"];
+      const branch = parsed["headRefName"];
       return {
         number: parsed["number"],
         url: parsed["url"],
@@ -686,10 +732,32 @@ function parsePrView(stdout: string): PrView | null {
         checks: checksState(checks),
         mergeState:
           typeof mergeState === "string" ? mergeState.toUpperCase() : null,
+        branch: typeof branch === "string" ? branch : "",
       };
     }
   } catch {
     // No PR (or unreadable output): treated as none.
+  }
+  return null;
+}
+
+// The number and branch of the PR `gh pr view` printed, whatever its state. A
+// stack's checked-out branch can merge while the PRs above it stay open, and
+// the stack still has to be read from that PR.
+function parsePrHead(
+  stdout: string,
+): { number: number; branch: string } | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (isRecord(parsed) && typeof parsed["number"] === "number") {
+      const branch = parsed["headRefName"];
+      return {
+        number: parsed["number"],
+        branch: typeof branch === "string" ? branch : "",
+      };
+    }
+  } catch {
+    // Unreadable output: no PR.
   }
   return null;
 }
@@ -746,6 +814,178 @@ function mergeBlocker(pr: PrView, push: PushInfo): string | null {
   return null;
 }
 
+// Why a stack's PR cannot merge yet, or null when it can. Only the checked-out
+// branch has a local push state to measure, so every other entry asks GitHub
+// alone: its merge state and its checks.
+function stackPrBlocker(pr: PrView): string | null {
+  if (pr.draft) return "PR is a draft";
+  const stateBlocker = mergeStateBlocker(pr);
+  if (stateBlocker) return stateBlocker;
+  if (pr.checks === "failed" || pr.checks === "pending") {
+    return "Checks have not all passed";
+  }
+  return null;
+}
+
+// The stack of a pull request. `gh pr view` has no stack field, so this asks
+// GitHub's GraphQL API. A stack's entries carry every member's state and
+// checks, so one read serves the whole list.
+const PR_STACK_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      stack {
+        number
+        size
+        baseRefName
+        entries(first: 100) {
+          nodes {
+            position
+            pullRequest {
+              number
+              url
+              state
+              isDraft
+              headRefName
+              mergeStateStatus
+              statusCheckRollup {
+                contexts(first: 100) {
+                  nodes {
+                    __typename
+                    ... on CheckRun { status conclusion }
+                    ... on StatusContext { state }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+// The record at a path of record fields, or null when any step is missing.
+function recordAt(
+  value: unknown,
+  ...keys: string[]
+): Record<string, unknown> | null {
+  let at: unknown = value;
+  for (const key of keys) {
+    if (!isRecord(at)) return null;
+    at = at[key];
+  }
+  return isRecord(at) ? at : null;
+}
+
+// The stack in the answer to PR_STACK_QUERY, or null when the PR is not in one
+// or the answer is unreadable. The checked-out branch's entry carries the same
+// blocker as the worktree's own PR, push state included.
+function parsePrStack(
+  stdout: string,
+  currentBranch: string,
+  push: PushInfo,
+): StackInfo | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const stack = recordAt(parsed, "data", "repository", "pullRequest", "stack");
+  if (!stack) return null;
+  const entries = recordAt(stack, "entries");
+  const nodes =
+    entries && Array.isArray(entries["nodes"]) ? entries["nodes"] : [];
+  const prs: StackPr[] = [];
+  for (const node of nodes) {
+    if (!isRecord(node)) continue;
+    const pr = recordAt(node, "pullRequest");
+    if (!pr) continue;
+    const number = typeof pr["number"] === "number" ? pr["number"] : 0;
+    const url = typeof pr["url"] === "string" ? pr["url"] : "";
+    const branch =
+      typeof pr["headRefName"] === "string" ? pr["headRefName"] : "";
+    const state =
+      typeof pr["state"] === "string" ? pr["state"].toUpperCase() : "OPEN";
+    if (!number || !url) continue;
+    const contexts = recordAt(pr, "statusCheckRollup", "contexts");
+    const checks = checksState(
+      contexts && Array.isArray(contexts["nodes"]) ? contexts["nodes"] : [],
+    );
+    const mergeState =
+      typeof pr["mergeStateStatus"] === "string"
+        ? pr["mergeStateStatus"].toUpperCase()
+        : null;
+    const view: PrView = {
+      number,
+      url,
+      draft: pr["isDraft"] === true,
+      checks,
+      mergeState,
+      branch,
+    };
+    const current = branch === currentBranch;
+    prs.push({
+      number,
+      url,
+      branch,
+      position: typeof node["position"] === "number" ? node["position"] : 0,
+      state,
+      current,
+      checks,
+      blocker:
+        state === "OPEN"
+          ? current
+            ? mergeBlocker(view, push)
+            : stackPrBlocker(view)
+          : null,
+    });
+  }
+  if (prs.length === 0) return null;
+  prs.sort((a, b) => a.position - b.position);
+  const number = typeof stack["number"] === "number" ? stack["number"] : 0;
+  if (!number) return null;
+  return {
+    number,
+    size: typeof stack["size"] === "number" ? stack["size"] : prs.length,
+    base: typeof stack["baseRefName"] === "string" ? stack["baseRefName"] : "",
+    prs,
+  };
+}
+
+// The stack of a PR, read in the worktree's folder. A failed read is no stack:
+// a repository without stacks, or a GitHub host without the field, keeps the
+// row it has.
+async function readPrStack(
+  repo: string,
+  number: number,
+  currentBranch: string,
+  push: PushInfo,
+  cwd: string,
+): Promise<StackInfo | null> {
+  const [owner, repoName] = repo.split("/");
+  if (!owner || !repoName) return null;
+  const result = await runCmd(
+    "gh",
+    [
+      "api",
+      "graphql",
+      "-f",
+      `query=${PR_STACK_QUERY}`,
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${repoName}`,
+      "-F",
+      `number=${number}`,
+    ],
+    cwd,
+  );
+  return result.code === 0
+    ? parsePrStack(result.stdout, currentBranch, push)
+    : null;
+}
+
 // Push state for one worktree, measured against origin/<branch> - the PR
 // head and push destination - never against the base-branch upstream that
 // timber's ahead/behind counts use. All reads are local and fail closed.
@@ -780,7 +1020,7 @@ async function pushInfo(
 }
 
 // The cache entry for a worktree that has an open PR.
-function prEntry(pr: PrView, push: PushInfo): PrEntry {
+function prEntry(pr: PrView, push: PushInfo, stack: StackInfo | null): PrEntry {
   return {
     number: pr.number,
     url: pr.url,
@@ -789,16 +1029,18 @@ function prEntry(pr: PrView, push: PushInfo): PrEntry {
     unpushed: push.unpushed,
     ff: push.ff,
     mergeBlocker: mergeBlocker(pr, push),
+    stack,
   };
 }
 
-// The open PR and push state of one worktree, read in the worktree's folder,
-// with the key that the PR cache and the rows use.
+// The open PR, its stack, and push state of one worktree, read in the
+// worktree's folder, with the key that the PR cache and the rows use.
 async function readPushAndPr(w: Worktree): Promise<{
   key: string;
   pr: PrView | null;
   push: PushInfo;
   repo: string | null;
+  stack: StackInfo | null;
 }> {
   const key = `${w.repo}\0${w.name}`;
   const [viewed, push, remote] = await Promise.all([
@@ -806,12 +1048,22 @@ async function readPushAndPr(w: Worktree): Promise<{
     pushInfo(w.path, w.name),
     runCmd("git", ["remote", "get-url", "origin"], w.path),
   ]);
-  return {
-    key,
-    pr: viewed.code === 0 ? parsePrView(viewed.stdout) : null,
-    push,
-    repo: remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null,
-  };
+  const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+  const head = viewed.code === 0 ? parsePrHead(viewed.stdout) : null;
+  const repo = remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
+  // The checked-out branch's PR can be merged while the PRs above it stay open,
+  // and the stack still has to be read: the head names the PR either way.
+  const stack =
+    head && repo
+      ? await readPrStack(
+          repo,
+          head.number,
+          head.branch || w.name,
+          push,
+          w.path,
+        )
+      : null;
+  return { key, pr, push, repo, stack };
 }
 
 // A row's state after something changed its worktree: the worktree as timber
@@ -833,8 +1085,11 @@ async function refreshWorktreeState(
     (w) => w.repo === repo && w.name === name,
   );
   if (!found) return null;
-  const { pr, push, repo: origin } = await readPushAndPr(found);
-  const entry: PrEntry = { ...(pr ? prEntry(pr, push) : push), repo: origin };
+  const { pr, push, repo: origin, stack } = await readPushAndPr(found);
+  const entry: PrEntry = {
+    ...(pr ? prEntry(pr, push, stack) : push),
+    repo: origin,
+  };
   prCache = { at: Date.now(), map: { ...(prCache?.map ?? {}), [key]: entry } };
   return { worktree: found, pr: entry };
 }
@@ -1060,6 +1315,14 @@ async function removeWorktree(
   if (found.statusError || !found.clean || (!found.merged && !synced)) {
     throw new Error(
       "Removal requires a clean worktree that is merged or fully in sync (0 ahead, 0 behind) with known status",
+    );
+  }
+  // A stack shares this worktree: removing it while a PR above the checked-out
+  // branch is still open would take the folder the rest of the stack needs.
+  const { stack } = await readPushAndPr(found);
+  if (stack && stack.prs.some((pr) => pr.state === "OPEN")) {
+    throw new Error(
+      "Removal requires every pull request in the worktree's stack to be merged",
     );
   }
 
@@ -1674,8 +1937,11 @@ export default function createTimber(host: unknown, web: Web) {
     const listing = await readListing();
     const entries = await Promise.all(
       listing.worktrees.map(async (w) => {
-        const { key, pr, push, repo } = await readPushAndPr(w);
-        return [key, { ...(pr ? prEntry(pr, push) : push), repo }] as const;
+        const { key, pr, push, repo, stack } = await readPushAndPr(w);
+        return [
+          key,
+          { ...(pr ? prEntry(pr, push, stack) : push), repo },
+        ] as const;
       }),
     );
     const map: Record<string, PrEntry> = {};
@@ -1983,9 +2249,12 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
-  // Merge the open PR once it passes mergeBlocker. Git and gh are read fresh,
-  // not from the panel's cache. --match-head-commit pins the merge to the
-  // commit that was checked, so a push after the check makes gh refuse.
+  // Merge a pull request. A stack merges through `gh stack merge`: the chosen
+  // PR and every PR below it land together, all or nothing, and the top PR
+  // lands the whole stack. A PR that is not in a stack merges on its own.
+  // Git and gh are read fresh, not from the panel's cache. The single-PR path
+  // pins the merge to the head commit it just read, so a push after the check
+  // makes gh refuse; a stack merge lets GitHub enforce its rules instead.
   web.route(
     "POST",
     "merge",
@@ -1995,10 +2264,13 @@ export default function createTimber(host: unknown, web: Web) {
       merged: number;
       url: string;
       state: WorktreeState | null;
+      stack?: boolean;
+      whole?: boolean;
     }> => {
       try {
         const repo = textField(body, "repo");
         const name = textField(body, "name");
+        const requested = numberField(body, "number");
         checkRepoName(repo);
         checkBranchName(name, "worktree name");
         const listing = await readListing();
@@ -2025,8 +2297,104 @@ export default function createTimber(host: unknown, web: Web) {
           found.path,
         );
         const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
+        const prHead = viewed.code === 0 ? parsePrHead(viewed.stdout) : null;
+        // A stack line can name a PR while the checked-out branch's own PR is
+        // already merged: the head still names the PR the stack hangs from.
+        if (!prHead) throw web.error(409, `No PR for ${name}@${repo}`);
+        if (!pr && !requested) {
+          throw web.error(409, `No open PR for ${name}@${repo}`);
+        }
+        const push = await pushInfo(found.path, name);
+        const remote = await runCmd(
+          "git",
+          ["remote", "get-url", "origin"],
+          found.path,
+        );
+        const origin =
+          remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
+        const stack = origin
+          ? await readPrStack(
+              origin,
+              prHead.number,
+              prHead.branch || name,
+              push,
+              found.path,
+            )
+          : null;
+
+        if (stack) {
+          const selected = requested
+            ? stack.prs.find((entry) => entry.number === requested)
+            : stack.prs.find((entry) => entry.number === prHead.number);
+          if (!selected) {
+            throw web.error(
+              409,
+              `PR #${requested} is not in the stack of ${name}@${repo}`,
+            );
+          }
+          if (selected.state !== "OPEN") {
+            throw web.error(
+              409,
+              `PR #${selected.number} is ${selected.state.toLowerCase()}`,
+            );
+          }
+          if (selected.blocker) {
+            // The row drew this button from a reading that can be a minute old,
+            // and this read is the one that refused it: hand the row the fresh
+            // reading, so it stops offering a merge that cannot happen.
+            try {
+              await refreshWorktreeState(repo, name);
+              web.send("fetched", { at: Date.now() });
+            } catch {
+              // The row's entry stays dropped, so the next poll reads it fresh.
+            }
+            throw web.error(
+              409,
+              `Cannot merge PR #${selected.number}: ${selected.blocker}`,
+            );
+          }
+          const merged = await runCmd(
+            "gh",
+            ["stack", "merge", String(selected.number), "--yes", "--merge"],
+            found.path,
+            180_000,
+          );
+          if (merged.code !== 0) {
+            throw new Error(
+              merged.stderr.trim() ||
+                `gh stack merge failed (exit ${merged.code})`,
+            );
+          }
+          // The repository's own fetch is what lets timber call the merged
+          // branches merged, since the base branch holds them on the remote now.
+          await runTimber(["git", `@${repo}`, "--", "fetch"]);
+          let state: WorktreeState | null = null;
+          try {
+            state = await refreshWorktreeState(repo, name);
+          } catch {
+            // The row's cached entry stays dropped, so the next state poll reads
+            // it fresh.
+          }
+          const whole =
+            selected.position === stack.prs[stack.prs.length - 1]?.position;
+          return {
+            merged: selected.number,
+            url: selected.url,
+            state,
+            stack: true,
+            whole,
+          };
+        }
+
+        if (requested) {
+          throw web.error(
+            409,
+            `PR #${requested} is not in a stack for ${name}@${repo}`,
+          );
+        }
+
         if (!pr) throw web.error(409, `No open PR for ${name}@${repo}`);
-        const blocker = mergeBlocker(pr, await pushInfo(found.path, name));
+        const blocker = mergeBlocker(pr, push);
         if (blocker) {
           // The row drew this button from a reading that can be a minute old,
           // and this read is the one that refused it: hand the row the fresh
@@ -2227,7 +2595,8 @@ export default function createTimber(host: unknown, web: Web) {
           message.includes("requires a clean") ||
           message.includes("Invalid") ||
           message.includes("refusing") ||
-          message.includes("not merged")
+          message.includes("not merged") ||
+          message.includes("stack")
         ) {
           throw web.error(409, message);
         }
