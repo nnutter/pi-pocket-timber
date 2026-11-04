@@ -1835,6 +1835,22 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
+  // Show a row's new state at once: read this row and no other, so its button
+  // shows what it can do now, and tell the tabs. Best effort: the background
+  // refresh covers a failure.
+  const warmRow = async (repo: string, name: string): Promise<void> => {
+    try {
+      await refreshWorktreeState(repo, name);
+      try {
+        web.send("fetched", { at: Date.now() });
+      } catch {
+        // Tabs may be gone; the next poll picks up the listing.
+      }
+    } catch {
+      // Warming is best-effort; the background refresh covers it.
+    }
+  };
+
   // A session in a worktree's folder, linked to this one, so that Pi can send it
   // the next message and read what it sends back. The page's Open button starts
   // a plain session instead: a person opens a worktree to work in, not to
@@ -2186,20 +2202,7 @@ export default function createTimber(host: unknown, web: Web) {
         const title = textField(body, "title");
         const prBody = textField(body, "body");
         const result = await openOrCreatePr(repo, name, title, prBody);
-        // Warm the PR cache so the row can show the PR without waiting for the
-        // next background refresh. This is the refresh's own read, so the entry
-        // holds the real draft and check state; the pull request exists, so the
-        // read finds it.
-        try {
-          await refreshWorktreeState(repo, name);
-          try {
-            web.send("fetched", { at: Date.now() });
-          } catch {
-            // Tabs may be gone; the next poll picks up the listing.
-          }
-        } catch {
-          // Warming is best-effort; the background refresh covers it.
-        }
+        await warmRow(repo, name);
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : "pr failed";
