@@ -86,9 +86,9 @@ Write the sidecar again after the files change: it records their hashes.
 - Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_bump`, which bumps a worktree's newest semantic version tag (`major`, `minor`, or `patch`) and pushes it, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
   A tool that changes what the page shows tells every open page and the panel to re-read the state at once, so a create, a removal, a fetch, or a repository change shows without waiting for the poll.
   A tool that changes one row reads that row before it tells them, and a fetch or a rename reads every row, because their cached reads are older than the change.
-- Rule for Pi: a session whose folder is a managed worktree is told which worktree it works in, and to open its pull request with `timber_pr_create` rather than `gh pr create`.
-  Sessions in other folders are told nothing: no worktree means no base branch or push to name.
-  Nothing blocks `gh`: a pull request that needs a reviewer, a label, or a stack is still gh's work.
+- Rules for Pi: a session whose folder is a managed worktree is told which worktree it works in, that it changes files only there, and that git writes the repository's data outside the worktree, to open its pull request with `timber_pr_create` rather than `gh pr create`, to get the person's approval before it makes a worktree or starts work in one, and to give the work of other worktrees to linked sessions that `timber_start_session` starts, one per worktree and one in its own for the work that belongs there.
+  A session that starts in any other folder is told nothing: it can be about work that a worktree has nothing to do with, such as OS maintenance.
+  Nothing blocks `gh` or `git worktree`: the rules steer Pi, and a pull request that needs a reviewer, a label, or a stack is still gh's work.
 
 ## Safety notes
 
