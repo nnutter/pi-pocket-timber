@@ -7,22 +7,22 @@
     "name": "Nathan Nutter",
     "github": "nnutter"
   },
-  "version": "1.3.0",
+  "version": "1.4.0",
   "source": {
     "repo": "nnutter/pi-pocket-timber",
-    "commit": "616b55440475098ffb2424c72bd81fb6c4c3dde8",
+    "commit": "3e84153719deccc6966434c97fd6b6380995519d",
     "path": "extensions"
   },
   "files": [
     {
       "name": "timber.ts",
-      "sha256": "750bfa40fc59e32e51bc365e8a8f653ba6ff0295d66cb09c304143e3881e356b",
-      "size": 93326
+      "sha256": "3cd7a6fc20d286a5895b84639b074890f54ba8c36908816ceb1d1fdc50017662",
+      "size": 107451
     },
     {
       "name": "timber/index.js",
-      "sha256": "0132a13b2564c4e7691fbd0ab1d37974f10cd0b26922cddd467bef5f9e848495",
-      "size": 97460
+      "sha256": "caf23ef7c91718166e985db134833036d006407031a39d991b2eda50826f7190",
+      "size": 96735
     }
   ],
   "pocketApi": 2,
@@ -32,14 +32,18 @@
     "tools": [
       "timber_list",
       "timber_create",
+      "timber_pr_create",
+      "timber_bump",
       "timber_remove",
       "timber_repo_add",
+      "timber_repo_rename",
+      "timber_repo_remove",
       "timber_fetch",
       "timber_start_session"
     ],
     "readOnlyTools": [],
     "hooks": [],
-    "sections": [],
+    "sections": ["timber_worktree"],
     "wraps": [],
     "routes": [
       "GET state",

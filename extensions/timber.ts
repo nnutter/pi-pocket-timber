@@ -1,5 +1,5 @@
 /**
- * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, read and merge the pull requests of a worktree's stack, and open a worktree's pull request, from pages, from panels on a wide screen, and from Pi's tools, which a session in a worktree is told to use for its own pull request.
+ * Timber worktrees and TODOs: list, create, open sessions in, and safely remove managed Git worktrees, read and edit the TODO list of a worktree or of its repository, read and merge the pull requests of a worktree's stack, and open a worktree's pull request, from pages, from panels on a wide screen, and from Pi's tools, which a session in a worktree is told to use for worktrees and their pull requests.
  * Wraps the `timber` CLI on the server (with `gh` to read and merge pull requests, and `gh stack` to merge a stack up to a chosen PR): listing, creation, safe removal, registration, rename, and removal of bare repositories, periodic fetching so merged branches show as Merged, a fresh read of the row an action changed, open-or-create PR per worktree (pushing the branch to `origin/<branch>` first when GitHub lacks it), the pull requests of a worktree's stack, the TODO files that `timber todo --path` and `--repo` resolve, and a linked session that Pi starts in a worktree's folder.
  */
 import { execFile as execFileCb, spawn } from "node:child_process";
@@ -354,6 +354,12 @@ async function toolWorktree(
 const WORKTREE_LOOKUP_TTL = 30_000;
 let worktreeLookup: { at: number; worktrees: Worktree[] } | null = null;
 
+// After a change that adds, moves, or removes a worktree, so that the next
+// request's rules name the folder's worktree as it is now.
+function forgetWorktreeLookup(): void {
+  worktreeLookup = null;
+}
+
 async function worktreeOfFolder(folder: string): Promise<Worktree | undefined> {
   if (
     worktreeLookup === null ||
@@ -404,6 +410,9 @@ async function createWorktree(
   const argv = ["create", target, "--no-herdr"];
   if (up) argv.push("--upstream", up);
   const result = await runTimber(argv);
+  // The prompt section's cached folders are older than this worktree, whatever
+  // the verification below finds.
+  forgetWorktreeLookup();
 
   const after = await readListing();
   const oldPaths = new Set(before.worktrees.map((w) => w.path));
@@ -524,6 +533,8 @@ async function renameRepository(
   const moved = before.worktrees.filter((w) => w.repo === from).length;
 
   const result = await runTimber(["repo", "rename", from, next]);
+  // The folder lookup names the repository's old worktree paths.
+  forgetWorktreeLookup();
   const after = await readListing();
   const renamed =
     after.repositories.includes(next) && !after.repositories.includes(from);
@@ -1484,6 +1495,8 @@ async function removeWorktree(
   }
 
   const result = await runTimber(["remove", `${name}@${repo}`]);
+  // The prompt section's cached folders still hold the worktree that is gone.
+  forgetWorktreeLookup();
   const after = await readListing();
   const stillThere = after.worktrees.some(
     (w) => w.path === found.path || (w.repo === repo && w.name === name),
@@ -1964,10 +1977,25 @@ const timberFetch = defineTool({
   },
 });
 
-// The rule for a session that works in a Timber worktree. The tool is the
-// shorter way to a pull request than `gh pr create` once Pi knows that it is
-// there, and a session in a worktree is the one place where it fits. Sessions in
-// other folders get no text, so the section stays the same for them.
+// The rules for a session that works in a Timber worktree: it changes that
+// folder's files, and the work of other worktrees goes to linked sessions. Git
+// writes into the repository's folder, which is outside the worktree, so the
+// rules name that write: a rule that forbids it would forbid every commit.
+function worktreeRules(worktree: Worktree): string {
+  return [
+    `This session works in the Timber worktree \`${worktree.name}@${worktree.repo}\` at \`${worktree.path}\`. Change files only in this folder. Do not read, edit, or commit in another worktree, in another checkout of the repository, or in a scratch folder such as \`/tmp\`. Git keeps the repository's data outside this folder, and this worktree's \`.git\` file points to it: a \`git\` command writes there, and that is part of working here.`,
+    "Ask the person to approve a new worktree before you make one with `timber_create`, and again before you start work in it.",
+    "Use the `timber_*` tools to manage worktrees and their pull requests (`timber_list`, `timber_create`, `timber_remove`, `timber_start_session`, `timber_pr_create`). Do not run `git worktree add`. Do not run `gh pr create`: `timber_pr_create` opens a worktree's pull request, and `gh` reads and merges pull requests here.",
+    "When the work must change more than one worktree or repository, start a linked session in each of them with `timber_start_session`. Start one in this worktree too for the work that belongs here, then coordinate the linked sessions and leave their edits to them. A linked session does not start linked sessions: do the work in it.",
+  ].join("\n");
+}
+
+// The rules for a session that works in a Timber worktree, and nothing for a
+// session that starts in any other folder: a session outside a worktree may be
+// about anything, such as OS maintenance, and these rules would only misdirect
+// it. A broken timber says nothing about the folder, so it leaves the section
+// out rather than name the wrong worktree; it must not stop a request either
+// way.
 const timberWorktreeRule = section("timber_worktree", async (input) => {
   const folder = input.agent.cwd;
   if (!folder) return undefined;
@@ -1975,15 +2003,9 @@ const timberWorktreeRule = section("timber_worktree", async (input) => {
   try {
     found = await worktreeOfFolder(folder);
   } catch {
-    // A broken timber says nothing about the folder; it must not stop a request.
     return undefined;
   }
-  if (!found) return undefined;
-  return [
-    `This session works in the Timber worktree \`${found.name}@${found.repo}\`.`,
-    "Open its pull request with the `timber_pr_create` tool, which pushes the branch and runs `timber pr create`.",
-    "Do not run `gh pr create`: `gh` reads and merges pull requests here, and timber opens them.",
-  ].join("\n");
+  return found ? worktreeRules(found) : undefined;
 });
 
 export default function createTimber(host: unknown, web: Web) {
