@@ -63,7 +63,8 @@ Write the sidecar again after the files change: it records their hashes.
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it.
   A worktree whose PR is in a stack is deleted only after every PR in the stack has merged
 - **Repository link**: the repository name in a row links to its page on GitHub, built from the worktree's `origin` remote; a worktree whose `origin` names no repository keeps the plain name
-- **PR link**: each row links its open pull request, right-aligned in the name row.
+- **PR link**: each row links its open pull request as `PR #<number>`, right-aligned in the name row.
+  Its tooltip is the pull request's title, which says more than the URL that the browser shows anyway.
   The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open.
   A worktree whose PR is in a stack links each PR on its stack line instead
 - **Stacked PRs**: when a worktree's pull request belongs to a GitHub stack, the row lists the stack under its name: the stack's number, linking its page, and each PR's branch, link, and one merge button.

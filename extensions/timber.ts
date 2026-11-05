@@ -65,6 +65,8 @@ let fetching: Promise<FetchRun> | null = null;
 type PrEntry = {
   number?: number;
   url?: string;
+  // The PR's title, for its link's tooltip. Set only with a PR.
+  title?: string;
   destExists: boolean;
   unpushed: number;
   ff: boolean;
@@ -86,6 +88,7 @@ type PrEntry = {
 type StackPr = {
   number: number;
   url: string;
+  title: string;
   branch: string;
   position: number;
   state: string;
@@ -695,7 +698,7 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 
 // Fields `gh pr view` must return for parsePrView.
 const PR_VIEW_FIELDS =
-  "number,url,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
+  "number,url,title,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
 
 // What the pull request's checks are doing: all passed, at least one failed,
 // some still to finish (or queued), or none at all. "none" is not "no checks
@@ -705,6 +708,7 @@ type ChecksState = "passed" | "failed" | "pending" | "none";
 type PrView = {
   number: number;
   url: string;
+  title: string;
   draft: boolean;
   checks: ChecksState;
   // GitHub's own answer on whether the PR can merge now, in upper case; null
@@ -770,9 +774,11 @@ function parsePrView(stdout: string): PrView | null {
       const checks = parsed["statusCheckRollup"];
       const mergeState = parsed["mergeStateStatus"];
       const branch = parsed["headRefName"];
+      const title = parsed["title"];
       return {
         number: parsed["number"],
         url: parsed["url"],
+        title: typeof title === "string" ? title : "",
         draft: parsed["isDraft"] === true,
         checks: checksState(checks),
         mergeState:
@@ -888,6 +894,7 @@ const PR_STACK_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
             pullRequest {
               number
               url
+              title
               state
               isDraft
               headRefName
@@ -948,6 +955,7 @@ function parsePrStack(
     if (!pr) continue;
     const number = typeof pr["number"] === "number" ? pr["number"] : 0;
     const url = typeof pr["url"] === "string" ? pr["url"] : "";
+    const title = typeof pr["title"] === "string" ? pr["title"] : "";
     const branch =
       typeof pr["headRefName"] === "string" ? pr["headRefName"] : "";
     const state =
@@ -964,6 +972,7 @@ function parsePrStack(
     const view: PrView = {
       number,
       url,
+      title,
       draft: pr["isDraft"] === true,
       checks,
       mergeState,
@@ -973,6 +982,7 @@ function parsePrStack(
     prs.push({
       number,
       url,
+      title,
       branch,
       position: typeof node["position"] === "number" ? node["position"] : 0,
       state,
@@ -1097,6 +1107,7 @@ function prEntry(pr: PrView, push: PushInfo, stack: StackInfo | null): PrEntry {
   return {
     number: pr.number,
     url: pr.url,
+    title: pr.title,
     checks: pr.checks,
     destExists: push.destExists,
     unpushed: push.unpushed,

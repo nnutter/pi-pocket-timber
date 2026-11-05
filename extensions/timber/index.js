@@ -972,7 +972,7 @@ export default function setup(pocket) {
           href=${pr.url}
           target="_blank"
           rel="noreferrer"
-          title=${pr.url}
+          title=${pr.title || pr.url}
           style=${{ fontSize: "12.5px", whiteSpace: "nowrap", justifySelf: "end" }}
           >PR #${pr.number}</a
         >
@@ -1657,7 +1657,7 @@ export default function setup(pocket) {
                         href=${prUrl}
                         target="_blank"
                         rel="noreferrer"
-                        title=${prUrl}
+                        title=${cachePr.title || prUrl}
                         style=${{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap" }}
                         >${prLabel}</a
                       >`
