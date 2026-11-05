@@ -354,6 +354,12 @@ async function toolWorktree(
 const WORKTREE_LOOKUP_TTL = 30_000;
 let worktreeLookup: { at: number; worktrees: Worktree[] } | null = null;
 
+// After a change that adds, moves, or removes a worktree, so that the next
+// request's rules name the folder's worktree as it is now.
+function forgetWorktreeLookup(): void {
+  worktreeLookup = null;
+}
+
 async function worktreeOfFolder(folder: string): Promise<Worktree | undefined> {
   if (
     worktreeLookup === null ||
@@ -404,6 +410,9 @@ async function createWorktree(
   const argv = ["create", target, "--no-herdr"];
   if (up) argv.push("--upstream", up);
   const result = await runTimber(argv);
+  // The prompt section's cached folders are older than this worktree, whatever
+  // the verification below finds.
+  forgetWorktreeLookup();
 
   const after = await readListing();
   const oldPaths = new Set(before.worktrees.map((w) => w.path));
@@ -524,6 +533,8 @@ async function renameRepository(
   const moved = before.worktrees.filter((w) => w.repo === from).length;
 
   const result = await runTimber(["repo", "rename", from, next]);
+  // The folder lookup names the repository's old worktree paths.
+  forgetWorktreeLookup();
   const after = await readListing();
   const renamed =
     after.repositories.includes(next) && !after.repositories.includes(from);
@@ -1484,6 +1495,8 @@ async function removeWorktree(
   }
 
   const result = await runTimber(["remove", `${name}@${repo}`]);
+  // The prompt section's cached folders still hold the worktree that is gone.
+  forgetWorktreeLookup();
   const after = await readListing();
   const stillThere = after.worktrees.some(
     (w) => w.path === found.path || (w.repo === repo && w.name === name),
