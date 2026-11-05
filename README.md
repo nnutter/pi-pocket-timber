@@ -72,7 +72,7 @@ Write the sidecar again after the files change: it records their hashes.
   Merging runs `gh stack merge`, so the chosen PR and every PR below it land together or not at all
 - **Action button**: one per row, chosen by what the row needs, and drawn only when it can act.
   A worktree whose PR is in a stack has no merge button of its own: its stack lines carry the merges, and the row keeps the worktree actions (push, delete, create)
-  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not); unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (a subject and body, or an empty form that describes the commits ahead of the branch's upstream, or a `pi`-written draft).
+  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not), and both wear the merge glyph; unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (a subject and body, or an empty form that describes the commits ahead of the branch's upstream, or a `pi`-written draft).
   A merged worktree with uncommitted changes, or one whose git status is unknown, shows no button and says why in a note.
   Creating one does not open a browser tab: the notice names the PR, and the row links it
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
