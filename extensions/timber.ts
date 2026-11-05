@@ -1928,7 +1928,7 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       await refreshWorktreeState(repo, name);
       try {
-        web.send("fetched", { at: Date.now() });
+        web.send("state", { at: Date.now() });
       } catch {
         // Tabs may be gone; the next poll picks up the listing.
       }
@@ -2216,7 +2216,7 @@ export default function createTimber(host: unknown, web: Web) {
             continue;
           }
           try {
-            web.send("fetched", { at: prCache?.at ?? Date.now() });
+            web.send("state", { at: prCache?.at ?? Date.now() });
           } catch {
             // Tabs may be gone; the next poll picks up the fresh listing.
           }
@@ -2264,7 +2264,7 @@ export default function createTimber(host: unknown, web: Web) {
         // fetch.
         await refreshPrCache();
         try {
-          web.send("fetched", { at: result.fetchedAt });
+          web.send("state", { at: result.fetchedAt });
         } catch {
           // Tabs may be gone; the next poll picks up the fresh listing.
         }
@@ -2552,7 +2552,7 @@ export default function createTimber(host: unknown, web: Web) {
             // reading, so it stops offering a merge that cannot happen.
             try {
               await refreshWorktreeState(repo, name);
-              web.send("fetched", { at: Date.now() });
+              web.send("state", { at: Date.now() });
             } catch {
               // The row's entry stays dropped, so the next poll reads it fresh.
             }
@@ -2609,7 +2609,7 @@ export default function createTimber(host: unknown, web: Web) {
           // reading, so it stops offering a merge that cannot happen.
           try {
             await refreshWorktreeState(repo, name);
-            web.send("fetched", { at: Date.now() });
+            web.send("state", { at: Date.now() });
           } catch {
             // The row's entry stays dropped, so the next poll reads it fresh.
           }
@@ -2878,7 +2878,7 @@ export default function createTimber(host: unknown, web: Web) {
     try {
       await fetchAllRepos();
       try {
-        web.send("fetched", { at: lastFetchAt });
+        web.send("state", { at: lastFetchAt });
       } catch {
         // No tabs to tell; the next poll reads the fresh listing.
       }

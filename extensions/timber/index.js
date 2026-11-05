@@ -408,13 +408,13 @@ export default function setup(pocket) {
       const timer = setInterval(() => {
         void load();
       }, 15000);
-      const stopFetched = pocket.on("fetched", () => {
+      const stopState = pocket.on("state", () => {
         void load();
       });
       return () => {
         alive = false;
         clearInterval(timer);
-        stopFetched();
+        stopState();
       };
     }, []);
 
