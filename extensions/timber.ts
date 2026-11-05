@@ -1945,11 +1945,6 @@ export default function createTimber(host: unknown, web: Web) {
         description:
           "Pull request title, one line of at most 72 characters, in the repository's commit subject style",
       }),
-      body: Type.Optional(
-        Type.String({
-          description: "Pull request body, Markdown, brief and factual",
-        }),
-      ),
       repo: Type.Optional(
         Type.String({
           description:
@@ -2019,11 +2014,13 @@ export default function createTimber(host: unknown, web: Web) {
       // makes the branch its own upstream: with `--base` the command needs no
       // upstream at all. A branch that tracks its own name names no base.
       const base = args.base ?? (await baseBranch(worktree));
+      // The subject carries the summary, so a pull request that Pi opens has no
+      // body: the title alone tells the reviewer what the change is.
       const created = await openOrCreatePr(
         worktree.repo,
         worktree.name,
         title,
-        args.body ?? "",
+        "",
         { base, draft: args.draft === true },
       );
       await warmRow(worktree.repo, worktree.name);
