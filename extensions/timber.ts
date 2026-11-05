@@ -311,6 +311,43 @@ function worktreeAt(
   });
 }
 
+// The worktree that a tool works on: the one that repo and name select, or the
+// one that holds the session's folder when neither is given.
+async function toolWorktree(
+  repo: string | undefined,
+  name: string | undefined,
+  folder: string | undefined,
+): Promise<Worktree> {
+  const listing = await readListing();
+  if (repo !== undefined || name !== undefined) {
+    const namedRepo = repo ?? "";
+    const namedWorktree = name ?? "";
+    checkRepoName(namedRepo);
+    checkBranchName(namedWorktree, "worktree name");
+    const found = listing.worktrees.find(
+      (w) => w.repo === namedRepo && w.name === namedWorktree,
+    );
+    if (!found) {
+      throw new Error(
+        `Worktree not found: ${namedWorktree}@${namedRepo}. Look one up with timber_list.`,
+      );
+    }
+    return found;
+  }
+  if (!folder) {
+    throw new Error(
+      "This session has no folder, so pass repo and name to name the worktree.",
+    );
+  }
+  const found = worktreeAt(listing.worktrees, folder);
+  if (!found) {
+    throw new Error(
+      `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
+    );
+  }
+  return found;
+}
+
 // The worktree a session works in, for its prompt section. Cached: a section
 // renders before every request, and a worktree moves under a session no more
 // often than timber lists it. In-memory only, so a reload reads it again.
@@ -2010,35 +2047,11 @@ export default function createTimber(host: unknown, web: Web) {
         );
       }
 
-      const listing = await readListing();
-      let worktree: Worktree | undefined;
-      if (args.repo !== undefined || args.name !== undefined) {
-        const repo = args.repo ?? "";
-        const name = args.name ?? "";
-        checkRepoName(repo);
-        checkBranchName(name, "worktree name");
-        worktree = listing.worktrees.find(
-          (w) => w.repo === repo && w.name === name,
-        );
-        if (!worktree) {
-          throw new Error(
-            `Worktree not found: ${name}@${repo}. Look one up with timber_list.`,
-          );
-        }
-      } else {
-        const folder = (await api.agent(context)).cwd;
-        if (!folder) {
-          throw new Error(
-            "This session has no folder, so pass repo and name to name the worktree.",
-          );
-        }
-        worktree = worktreeAt(listing.worktrees, folder);
-        if (!worktree) {
-          throw new Error(
-            `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
-          );
-        }
-      }
+      const folder =
+        args.repo === undefined && args.name === undefined
+          ? (await api.agent(context)).cwd
+          : undefined;
+      const worktree = await toolWorktree(args.repo, args.name, folder);
 
       const pushed =
         args.push === false ? { pushed: false } : await pushBranch(worktree);
