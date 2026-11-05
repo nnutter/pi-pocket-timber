@@ -1163,6 +1163,23 @@ async function refreshWorktreeState(
   return { worktree: found, pr: entry };
 }
 
+// Tell every open tab that the state it shows changed, so that each one re-reads
+// the state now instead of at its next poll. The extension sets this when it is
+// made, which is before a route or a tool can run, so a caller can await it.
+let announceState: () => Promise<void> = async () => {};
+
+// Show a row's new state at once: read this row and no other, so its button
+// shows what it can do now, and tell the tabs. Best effort: the background
+// refresh covers a failure.
+async function warmRow(repo: string, name: string): Promise<void> {
+  try {
+    await refreshWorktreeState(repo, name);
+    await announceState();
+  } catch {
+    // Warming is best-effort; the background refresh covers it.
+  }
+}
+
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
 // URL names no repository on GitHub.
 function repoFromRemoteUrl(url: string): string | null {
@@ -1921,22 +1938,6 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
-  // Show a row's new state at once: read this row and no other, so its button
-  // shows what it can do now, and tell the tabs. Best effort: the background
-  // refresh covers a failure.
-  const warmRow = async (repo: string, name: string): Promise<void> => {
-    try {
-      await refreshWorktreeState(repo, name);
-      try {
-        web.send("state", { at: Date.now() });
-      } catch {
-        // Tabs may be gone; the next poll picks up the listing.
-      }
-    } catch {
-      // Warming is best-effort; the background refresh covers it.
-    }
-  };
-
   // The pull request of the worktree that Pi works in. It pushes the branch the
   // way `push.default = current` does, to origin's branch of the same name, so
   // that `gh pr create` is not the shorter way out: that command names neither
@@ -2226,6 +2227,23 @@ export default function createTimber(host: unknown, web: Web) {
       }
     })();
     return run.done;
+  };
+
+  // Tell every open tab that the state it shows changed, so that each one
+  // re-reads it now rather than at its next poll. Rows that a change made stale
+  // are read again first, because their entries are older than the change; that
+  // pass tells the tabs itself when it lands, so no tab reads a state from
+  // before the change.
+  announceState = async (): Promise<void> => {
+    if (prCacheStale) {
+      await refreshPrCache();
+      return;
+    }
+    try {
+      web.send("state", { at: Date.now() });
+    } catch {
+      // Tabs may be gone; the next poll picks up the change.
+    }
   };
 
   web.route("GET", "state", async (): Promise<State & { models: string[] }> => {
