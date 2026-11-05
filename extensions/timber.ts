@@ -1977,10 +1977,25 @@ const timberFetch = defineTool({
   },
 });
 
-// The rule for a session that works in a Timber worktree. The tool is the
-// shorter way to a pull request than `gh pr create` once Pi knows that it is
-// there, and a session in a worktree is the one place where it fits. Sessions in
-// other folders get no text, so the section stays the same for them.
+// The rules for a session that works in a Timber worktree: it changes that
+// folder's files, and the work of other worktrees goes to linked sessions. Git
+// writes into the repository's folder, which is outside the worktree, so the
+// rules name that write: a rule that forbids it would forbid every commit.
+function worktreeRules(worktree: Worktree): string {
+  return [
+    `This session works in the Timber worktree \`${worktree.name}@${worktree.repo}\` at \`${worktree.path}\`. Change files only in this folder. Do not read, edit, or commit in another worktree, in another checkout of the repository, or in a scratch folder such as \`/tmp\`. Git keeps the repository's data outside this folder, and this worktree's \`.git\` file points to it: a \`git\` command writes there, and that is part of working here.`,
+    "Ask the person to approve a new worktree before you make one with `timber_create`, and again before you start work in it.",
+    "Use the `timber_*` tools to manage worktrees and their pull requests (`timber_list`, `timber_create`, `timber_remove`, `timber_start_session`, `timber_pr_create`). Do not run `git worktree add`. Do not run `gh pr create`: `timber_pr_create` opens a worktree's pull request, and `gh` reads and merges pull requests here.",
+    "When the work must change more than one worktree or repository, start a linked session in each of them with `timber_start_session`. Start one in this worktree too for the work that belongs here, then coordinate the linked sessions and leave their edits to them. A linked session does not start linked sessions: do the work in it.",
+  ].join("\n");
+}
+
+// The rules for a session that works in a Timber worktree, and nothing for a
+// session that starts in any other folder: a session outside a worktree may be
+// about anything, such as OS maintenance, and these rules would only misdirect
+// it. A broken timber says nothing about the folder, so it leaves the section
+// out rather than name the wrong worktree; it must not stop a request either
+// way.
 const timberWorktreeRule = section("timber_worktree", async (input) => {
   const folder = input.agent.cwd;
   if (!folder) return undefined;
@@ -1988,15 +2003,9 @@ const timberWorktreeRule = section("timber_worktree", async (input) => {
   try {
     found = await worktreeOfFolder(folder);
   } catch {
-    // A broken timber says nothing about the folder; it must not stop a request.
     return undefined;
   }
-  if (!found) return undefined;
-  return [
-    `This session works in the Timber worktree \`${found.name}@${found.repo}\`.`,
-    "Open its pull request with the `timber_pr_create` tool, which pushes the branch and runs `timber pr create`.",
-    "Do not run `gh pr create`: `gh` reads and merges pull requests here, and timber opens them.",
-  ].join("\n");
+  return found ? worktreeRules(found) : undefined;
 });
 
 export default function createTimber(host: unknown, web: Web) {
