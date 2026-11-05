@@ -118,6 +118,16 @@ let prCacheStale = false;
 let prRefresh: { again: boolean; done: Promise<void> } | null = null;
 const PR_CACHE_TTL = 60_000;
 
+// Drop a row's cached read, so that the next read of it starts fresh.
+function forgetRow(repo: string, name: string): void {
+  if (!prCache) return;
+  const key = `${repo}\0${name}`;
+  if (!(key in prCache.map)) return;
+  const map = { ...prCache.map };
+  delete map[key];
+  prCache = { at: prCache.at, map };
+}
+
 // A row after an action changed its worktree: the worktree as timber lists it
 // now, and its PR and push state.
 type WorktreeState = { worktree: Worktree; pr: PrEntry };
@@ -1138,11 +1148,7 @@ async function refreshWorktreeState(
   name: string,
 ): Promise<WorktreeState | null> {
   const key = `${repo}\0${name}`;
-  if (prCache) {
-    const map = { ...prCache.map };
-    delete map[key];
-    prCache = { at: prCache.at, map };
-  }
+  forgetRow(repo, name);
   const listing = await readListing();
   const found = listing.worktrees.find(
     (w) => w.repo === repo && w.name === name,
