@@ -1781,6 +1781,10 @@ const timberCreate = defineTool({
       args.name ?? "",
       args.upstream ?? "",
     );
+    // The row exists now, and its push and PR state with it, so its button can
+    // say what it can do: a row with no cached read offers to remove the
+    // worktree that the person has just made.
+    await warmRow(created.worktree.repo, created.worktree.name);
     return {
       output: [
         {
@@ -1802,6 +1806,8 @@ const timberRemove = defineTool({
   }),
   execute: async (args) => {
     const removed = await removeWorktree(args.repo, args.name);
+    forgetRow(args.repo, args.name);
+    await announceState();
     return {
       output: [{ type: "text" as const, text: `Removed ${removed.removed}` }],
     };
@@ -1827,6 +1833,7 @@ const timberRepoAdd = defineTool({
       args.name ?? "",
       args.alias ?? "",
     );
+    await announceState();
     return {
       output: [
         {
@@ -1848,6 +1855,9 @@ const timberRepoRename = defineTool({
   }),
   execute: async (args) => {
     const renamed = await renameRepository(args.repo, args.to);
+    // The rows of the repository are listed under its new name now, and their
+    // cached reads are older than the rename: this reads them again first.
+    await announceState();
     const moved =
       renamed.worktrees === 0
         ? ""
@@ -1872,6 +1882,7 @@ const timberRepoRemove = defineTool({
   }),
   execute: async (args) => {
     const removed = await removeRepository(args.repo);
+    await announceState();
     return {
       output: [
         {
@@ -1891,6 +1902,9 @@ const timberFetch = defineTool({
   replay: "safe",
   execute: async () => {
     const result = await fetchAllRepos();
+    // The fetch moved origin/<branch>, which is what a row's push state reads:
+    // this reads the rows again, and only then tells the tabs.
+    await announceState();
     return {
       output: [
         {
@@ -2194,7 +2208,9 @@ export default function createTimber(host: unknown, web: Web) {
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time. A read asked for while one
   // runs repeats the pass rather than joining it, so that a button drawn from
-  // the answer is never drawn from a read that began before the ask.
+  // the answer is never drawn from a read that began before the ask. A pass
+  // whose reads all failed still tells the tabs: the change that asked for it
+  // happened, whatever the read could make of it.
   const refreshPrCache = async (): Promise<void> => {
     if (prRefresh) {
       prRefresh.again = true;
@@ -2214,16 +2230,15 @@ export default function createTimber(host: unknown, web: Web) {
           } catch {
             // A timber read failed: the cache keeps what it had, and the next
             // pass tries again.
-            continue;
-          }
-          try {
-            web.send("state", { at: prCache?.at ?? Date.now() });
-          } catch {
-            // Tabs may be gone; the next poll picks up the fresh listing.
           }
         } while (run.again);
       } finally {
         prRefresh = null;
+      }
+      try {
+        web.send("state", { at: prCache?.at ?? Date.now() });
+      } catch {
+        // Tabs may be gone; the next poll picks up the fresh listing.
       }
     })();
     return run.done;
@@ -2280,12 +2295,7 @@ export default function createTimber(host: unknown, web: Web) {
         // reads next is current instead of a minute old. A pass already running
         // repeats itself, so this answer is never a read that began before the
         // fetch.
-        await refreshPrCache();
-        try {
-          web.send("state", { at: result.fetchedAt });
-        } catch {
-          // Tabs may be gone; the next poll picks up the fresh listing.
-        }
+        await announceState();
         return result;
       } catch (error) {
         throw web.error(
@@ -2568,12 +2578,7 @@ export default function createTimber(host: unknown, web: Web) {
             // The row drew this button from a reading that can be a minute old,
             // and this read is the one that refused it: hand the row the fresh
             // reading, so it stops offering a merge that cannot happen.
-            try {
-              await refreshWorktreeState(repo, name);
-              web.send("state", { at: Date.now() });
-            } catch {
-              // The row's entry stays dropped, so the next poll reads it fresh.
-            }
+            await warmRow(repo, name);
             throw web.error(
               409,
               `Cannot merge PR #${selected.number}: ${selected.blocker}`,
@@ -2625,12 +2630,7 @@ export default function createTimber(host: unknown, web: Web) {
           // The row drew this button from a reading that can be a minute old,
           // and this read is the one that refused it: hand the row the fresh
           // reading, so it stops offering a merge that cannot happen.
-          try {
-            await refreshWorktreeState(repo, name);
-            web.send("state", { at: Date.now() });
-          } catch {
-            // The row's entry stays dropped, so the next poll reads it fresh.
-          }
+          await warmRow(repo, name);
           throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
         }
         const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);
@@ -2894,12 +2894,10 @@ export default function createTimber(host: unknown, web: Web) {
   // Skips when a run is already going. Cleared when this version goes.
   const fetchLoop = async () => {
     try {
+      // A fetch moves origin/<branch>, which is what a row's push state reads,
+      // so the rows are read again before the tabs are told.
       await fetchAllRepos();
-      try {
-        web.send("state", { at: lastFetchAt });
-      } catch {
-        // No tabs to tell; the next poll reads the fresh listing.
-      }
+      await announceState();
     } catch {
       // Best effort: fetch errors surface via state.fetchError.
     }
