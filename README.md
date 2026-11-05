@@ -8,7 +8,7 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests, and `gh stack
 
 ## Requirements
 
-- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`, and `timber todo --repo` for the repository's TODO list; an older timber shows the worktree's list and says why the other one is missing)
+- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`, and `timber todo --repo` for the repository's TODO list; an older timber shows the worktree's list and says why the other one is missing), and 0.23.0 or newer for `timber bump`, which the `timber_bump` tool runs
 - [`gh`](https://cli.github.com/) signed in, to read and merge pull requests (`gh auth login`)
 - [`gh stack`](https://github.com/github/gh-stack) to merge a stack of pull requests (`gh extension install github/gh-stack`); without it, the page still reads stacks and merges a single PR, but a stack's merge buttons fail with gh's message
 - `git` (for the worktree's commits and push state)
@@ -63,7 +63,8 @@ Write the sidecar again after the files change: it records their hashes.
 - **Delete** (clean worktrees that are merged or fully in sync only, two-tap confirm); the sessions that worked in its folder are archived with it.
   A worktree whose PR is in a stack is deleted only after every PR in the stack has merged
 - **Repository link**: the repository name in a row links to its page on GitHub, built from the worktree's `origin` remote; a worktree whose `origin` names no repository keeps the plain name
-- **PR link**: each row links its open pull request, right-aligned in the name row.
+- **PR link**: each row links its open pull request as `PR #<number>`, right-aligned in the name row.
+  Its tooltip is the pull request's title, which says more than the URL that the browser shows anyway.
   The server reads the PR with `gh pr view` in the worktree's folder, so a pull request made in a session or on GitHub appears too, within a minute while the page or panel is open.
   A worktree whose PR is in a stack links each PR on its stack line instead
 - **Stacked PRs**: when a worktree's pull request belongs to a GitHub stack, the row lists the stack under its name: the stack's number, linking its page, and each PR's branch, link, and one merge button.
@@ -72,7 +73,7 @@ Write the sidecar again after the files change: it records their hashes.
   Merging runs `gh stack merge`, so the chosen PR and every PR below it land together or not at all
 - **Action button**: one per row, chosen by what the row needs, and drawn only when it can act.
   A worktree whose PR is in a stack has no merge button of its own: its stack lines carry the merges, and the row keeps the worktree actions (push, delete, create)
-  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not); unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (a subject and body, or an empty form that describes the commits ahead of the branch's upstream, or a `pi`-written draft).
+  A ready pull request offers its merge; one that cannot merge yet opens the pull request (its title says why not), and both wear the merge glyph; unpushed commits offer a push; a worktree that can be removed offers delete; a row with no PR opens the create form (a subject and body, or an empty form that describes the commits ahead of the branch's upstream, or a `pi`-written draft).
   A merged worktree with uncommitted changes, or one whose git status is unknown, shows no button and says why in a note.
   Creating one does not open a browser tab: the notice names the PR, and the row links it
 - **Upload**: when a PR is open and the worktree has unpushed commits over `origin/<branch>` with a fast-forward path, push via explicit `git push origin HEAD:<name>` (works under any `push.default`, never touches upstream, never force).
@@ -82,7 +83,9 @@ Write the sidecar again after the files change: it records their hashes.
   A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
-- Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+- Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_bump`, which bumps a worktree's newest semantic version tag (`major`, `minor`, or `patch`) and pushes it, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+  A tool that changes what the page shows tells every open page and the panel to re-read the state at once, so a create, a removal, a fetch, or a repository change shows without waiting for the poll.
+  A tool that changes one row reads that row before it tells them, and a fetch or a rename reads every row, because their cached reads are older than the change.
 - Rule for Pi: a session whose folder is a managed worktree is told which worktree it works in, and to open its pull request with `timber_pr_create` rather than `gh pr create`.
   Sessions in other folders are told nothing: no worktree means no base branch or push to name.
   Nothing blocks `gh`: a pull request that needs a reviewer, a label, or a stack is still gh's work.

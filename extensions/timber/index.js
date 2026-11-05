@@ -23,6 +23,26 @@ export default function setup(pocket) {
   const TRASH_PATH =
     "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6.5 7l.9 12.1a2 2 0 002 1.9h5.2a2 2 0 002-1.9L17.5 7M10 11v6M14 11v6";
 
+  /** The paths of the merge glyph: a merge button, and an open PR's button. */
+  const MERGE_ICON_PATHS = [
+    "M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z",
+    "M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z",
+    "M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z",
+  ];
+
+  /** The merge glyph at `size` pixels. */
+  const mergeIcon = (size) =>
+    html`<svg
+      width=${size}
+      height=${size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      style=${{ flexShrink: 0 }}
+    >
+      ${MERGE_ICON_PATHS.map((d) => html`<path d=${d} />`)}
+    </svg>`;
+
   // Status items in a worktree row share the 24px height of the row buttons.
   const ROW_ITEM = {
     display: "inline-flex",
@@ -388,13 +408,13 @@ export default function setup(pocket) {
       const timer = setInterval(() => {
         void load();
       }, 15000);
-      const stopFetched = pocket.on("fetched", () => {
+      const stopState = pocket.on("state", () => {
         void load();
       });
       return () => {
         alive = false;
         clearInterval(timer);
-        stopFetched();
+        stopState();
       };
     }, []);
 
@@ -952,7 +972,7 @@ export default function setup(pocket) {
           href=${pr.url}
           target="_blank"
           rel="noreferrer"
-          title=${pr.url}
+          title=${pr.title || pr.url}
           style=${{ fontSize: "12.5px", whiteSpace: "nowrap", justifySelf: "end" }}
           >PR #${pr.number}</a
         >
@@ -985,24 +1005,7 @@ export default function setup(pocket) {
                   ${inFlight(
                     stackAction("merge", w, pr.number),
                     label,
-                    html`<svg
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      aria-hidden="true"
-                      style=${{ flexShrink: 0 }}
-                    >
-                      <path
-                        d="M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z"
-                      />
-                      <path
-                        d="M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z"
-                      />
-                      <path
-                        d="M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z"
-                      />
-                    </svg>`,
+                    mergeIcon(15),
                   )}
                 </button>`
         }
@@ -1654,7 +1657,7 @@ export default function setup(pocket) {
                         href=${prUrl}
                         target="_blank"
                         rel="noreferrer"
-                        title=${prUrl}
+                        title=${cachePr.title || prUrl}
                         style=${{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap" }}
                         >${prLabel}</a
                       >`
@@ -1798,24 +1801,7 @@ export default function setup(pocket) {
                       ${inFlight(
                         rowAction("merge", w),
                         `Merge PR #${cachePr.number} for ${w.name}@${w.repo}`,
-                        html`<svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="currentColor"
-                          aria-hidden="true"
-                          style=${{ flexShrink: 0 }}
-                        >
-                          <path
-                            d="M15 13.25a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm-12.5 6a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0Zm0-14.5a3.25 3.25 0 1 1 6.5 0 3.25 3.25 0 0 1-6.5 0ZM5.75 6.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 6.5Zm0 14.5a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 5.75 21Zm12.5-6a1.75 1.75 0 1 0-.001-3.501A1.75 1.75 0 0 0 18.25 15Z"
-                          />
-                          <path
-                            d="M6.5 7.25c0 2.9 2.35 5.25 5.25 5.25h4.5V14h-4.5A6.75 6.75 0 0 1 5 7.25Z"
-                          />
-                          <path
-                            d="M5.75 16.75A.75.75 0 0 1 5 16V8a.75.75 0 0 1 1.5 0v8a.75.75 0 0 1-.75.75Z"
-                          />
-                        </svg>`,
+                        mergeIcon(16),
                       )}
                     </button>`
                   }
@@ -1854,18 +1840,25 @@ export default function setup(pocket) {
                       }}
                       style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        aria-hidden="true"
-                        style=${{ flexShrink: 0 }}
-                      >
-                        <path
-                          d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
-                        />
-                      </svg>
+                      ${
+                        // An open pull request wears the merge glyph, colored by
+                        // what waits: the create glyph would say the pull
+                        // request is still to be made.
+                        openPr
+                          ? mergeIcon(16)
+                          : html`<svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 16 16"
+                              fill="currentColor"
+                              aria-hidden="true"
+                              style=${{ flexShrink: 0 }}
+                            >
+                              <path
+                                d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"
+                              />
+                            </svg>`
+                      }
                     </button>`
                   }
                   ${

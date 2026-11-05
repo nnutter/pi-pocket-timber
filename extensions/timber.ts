@@ -65,6 +65,8 @@ let fetching: Promise<FetchRun> | null = null;
 type PrEntry = {
   number?: number;
   url?: string;
+  // The PR's title, for its link's tooltip. Set only with a PR.
+  title?: string;
   destExists: boolean;
   unpushed: number;
   ff: boolean;
@@ -86,6 +88,7 @@ type PrEntry = {
 type StackPr = {
   number: number;
   url: string;
+  title: string;
   branch: string;
   position: number;
   state: string;
@@ -117,6 +120,16 @@ let prCacheStale = false;
 // answer for it.
 let prRefresh: { again: boolean; done: Promise<void> } | null = null;
 const PR_CACHE_TTL = 60_000;
+
+// Drop a row's cached read, so that the next read of it starts fresh.
+function forgetRow(repo: string, name: string): void {
+  if (!prCache) return;
+  const key = `${repo}\0${name}`;
+  if (!(key in prCache.map)) return;
+  const map = { ...prCache.map };
+  delete map[key];
+  prCache = { at: prCache.at, map };
+}
 
 // A row after an action changed its worktree: the worktree as timber lists it
 // now, and its PR and push state.
@@ -296,6 +309,43 @@ function worktreeAt(
     const rest = relative(resolve(w.path), target);
     return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
   });
+}
+
+// The worktree that a tool works on: the one that repo and name select, or the
+// one that holds the session's folder when neither is given.
+async function toolWorktree(
+  repo: string | undefined,
+  name: string | undefined,
+  folder: string | undefined,
+): Promise<Worktree> {
+  const listing = await readListing();
+  if (repo !== undefined || name !== undefined) {
+    const namedRepo = repo ?? "";
+    const namedWorktree = name ?? "";
+    checkRepoName(namedRepo);
+    checkBranchName(namedWorktree, "worktree name");
+    const found = listing.worktrees.find(
+      (w) => w.repo === namedRepo && w.name === namedWorktree,
+    );
+    if (!found) {
+      throw new Error(
+        `Worktree not found: ${namedWorktree}@${namedRepo}. Look one up with timber_list.`,
+      );
+    }
+    return found;
+  }
+  if (!folder) {
+    throw new Error(
+      "This session has no folder, so pass repo and name to name the worktree.",
+    );
+  }
+  const found = worktreeAt(listing.worktrees, folder);
+  if (!found) {
+    throw new Error(
+      `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
+    );
+  }
+  return found;
 }
 
 // The worktree a session works in, for its prompt section. Cached: a section
@@ -685,7 +735,7 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 
 // Fields `gh pr view` must return for parsePrView.
 const PR_VIEW_FIELDS =
-  "number,url,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
+  "number,url,title,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
 
 // What the pull request's checks are doing: all passed, at least one failed,
 // some still to finish (or queued), or none at all. "none" is not "no checks
@@ -695,6 +745,7 @@ type ChecksState = "passed" | "failed" | "pending" | "none";
 type PrView = {
   number: number;
   url: string;
+  title: string;
   draft: boolean;
   checks: ChecksState;
   // GitHub's own answer on whether the PR can merge now, in upper case; null
@@ -760,9 +811,11 @@ function parsePrView(stdout: string): PrView | null {
       const checks = parsed["statusCheckRollup"];
       const mergeState = parsed["mergeStateStatus"];
       const branch = parsed["headRefName"];
+      const title = parsed["title"];
       return {
         number: parsed["number"],
         url: parsed["url"],
+        title: typeof title === "string" ? title : "",
         draft: parsed["isDraft"] === true,
         checks: checksState(checks),
         mergeState:
@@ -878,6 +931,7 @@ const PR_STACK_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
             pullRequest {
               number
               url
+              title
               state
               isDraft
               headRefName
@@ -938,6 +992,7 @@ function parsePrStack(
     if (!pr) continue;
     const number = typeof pr["number"] === "number" ? pr["number"] : 0;
     const url = typeof pr["url"] === "string" ? pr["url"] : "";
+    const title = typeof pr["title"] === "string" ? pr["title"] : "";
     const branch =
       typeof pr["headRefName"] === "string" ? pr["headRefName"] : "";
     const state =
@@ -954,6 +1009,7 @@ function parsePrStack(
     const view: PrView = {
       number,
       url,
+      title,
       draft: pr["isDraft"] === true,
       checks,
       mergeState,
@@ -963,6 +1019,7 @@ function parsePrStack(
     prs.push({
       number,
       url,
+      title,
       branch,
       position: typeof node["position"] === "number" ? node["position"] : 0,
       state,
@@ -1087,6 +1144,7 @@ function prEntry(pr: PrView, push: PushInfo, stack: StackInfo | null): PrEntry {
   return {
     number: pr.number,
     url: pr.url,
+    title: pr.title,
     checks: pr.checks,
     destExists: push.destExists,
     unpushed: push.unpushed,
@@ -1138,11 +1196,7 @@ async function refreshWorktreeState(
   name: string,
 ): Promise<WorktreeState | null> {
   const key = `${repo}\0${name}`;
-  if (prCache) {
-    const map = { ...prCache.map };
-    delete map[key];
-    prCache = { at: prCache.at, map };
-  }
+  forgetRow(repo, name);
   const listing = await readListing();
   const found = listing.worktrees.find(
     (w) => w.repo === repo && w.name === name,
@@ -1155,6 +1209,23 @@ async function refreshWorktreeState(
   };
   prCache = { at: Date.now(), map: { ...(prCache?.map ?? {}), [key]: entry } };
   return { worktree: found, pr: entry };
+}
+
+// Tell every open tab that the state it shows changed, so that each one re-reads
+// the state now instead of at its next poll. The extension sets this when it is
+// made, which is before a route or a tool can run, so a caller can await it.
+let announceState: () => Promise<void> = async () => {};
+
+// Show a row's new state at once: read this row and no other, so its button
+// shows what it can do now, and tell the tabs. Best effort: the background
+// refresh covers a failure.
+async function warmRow(repo: string, name: string): Promise<void> {
+  try {
+    await refreshWorktreeState(repo, name);
+    await announceState();
+  } catch {
+    // Warming is best-effort; the background refresh covers it.
+  }
 }
 
 // `owner/name` from a git remote URL: ssh, scp-like, or https. Null when the
@@ -1758,6 +1829,10 @@ const timberCreate = defineTool({
       args.name ?? "",
       args.upstream ?? "",
     );
+    // The row exists now, and its push and PR state with it, so its button can
+    // say what it can do: a row with no cached read offers to remove the
+    // worktree that the person has just made.
+    await warmRow(created.worktree.repo, created.worktree.name);
     return {
       output: [
         {
@@ -1779,6 +1854,8 @@ const timberRemove = defineTool({
   }),
   execute: async (args) => {
     const removed = await removeWorktree(args.repo, args.name);
+    forgetRow(args.repo, args.name);
+    await announceState();
     return {
       output: [{ type: "text" as const, text: `Removed ${removed.removed}` }],
     };
@@ -1804,6 +1881,7 @@ const timberRepoAdd = defineTool({
       args.name ?? "",
       args.alias ?? "",
     );
+    await announceState();
     return {
       output: [
         {
@@ -1825,6 +1903,9 @@ const timberRepoRename = defineTool({
   }),
   execute: async (args) => {
     const renamed = await renameRepository(args.repo, args.to);
+    // The rows of the repository are listed under its new name now, and their
+    // cached reads are older than the rename: this reads them again first.
+    await announceState();
     const moved =
       renamed.worktrees === 0
         ? ""
@@ -1849,6 +1930,7 @@ const timberRepoRemove = defineTool({
   }),
   execute: async (args) => {
     const removed = await removeRepository(args.repo);
+    await announceState();
     return {
       output: [
         {
@@ -1868,6 +1950,9 @@ const timberFetch = defineTool({
   replay: "safe",
   execute: async () => {
     const result = await fetchAllRepos();
+    // The fetch moved origin/<branch>, which is what a row's push state reads:
+    // this reads the rows again, and only then tells the tabs.
+    await announceState();
     return {
       output: [
         {
@@ -1915,22 +2000,6 @@ export default function createTimber(host: unknown, web: Web) {
     }
   };
 
-  // Show a row's new state at once: read this row and no other, so its button
-  // shows what it can do now, and tell the tabs. Best effort: the background
-  // refresh covers a failure.
-  const warmRow = async (repo: string, name: string): Promise<void> => {
-    try {
-      await refreshWorktreeState(repo, name);
-      try {
-        web.send("fetched", { at: Date.now() });
-      } catch {
-        // Tabs may be gone; the next poll picks up the listing.
-      }
-    } catch {
-      // Warming is best-effort; the background refresh covers it.
-    }
-  };
-
   // The pull request of the worktree that Pi works in. It pushes the branch the
   // way `push.default = current` does, to origin's branch of the same name, so
   // that `gh pr create` is not the shorter way out: that command names neither
@@ -1945,11 +2014,6 @@ export default function createTimber(host: unknown, web: Web) {
         description:
           "Pull request title, one line of at most 72 characters, in the repository's commit subject style",
       }),
-      body: Type.Optional(
-        Type.String({
-          description: "Pull request body, Markdown, brief and factual",
-        }),
-      ),
       repo: Type.Optional(
         Type.String({
           description:
@@ -1983,35 +2047,11 @@ export default function createTimber(host: unknown, web: Web) {
         );
       }
 
-      const listing = await readListing();
-      let worktree: Worktree | undefined;
-      if (args.repo !== undefined || args.name !== undefined) {
-        const repo = args.repo ?? "";
-        const name = args.name ?? "";
-        checkRepoName(repo);
-        checkBranchName(name, "worktree name");
-        worktree = listing.worktrees.find(
-          (w) => w.repo === repo && w.name === name,
-        );
-        if (!worktree) {
-          throw new Error(
-            `Worktree not found: ${name}@${repo}. Look one up with timber_list.`,
-          );
-        }
-      } else {
-        const folder = (await api.agent(context)).cwd;
-        if (!folder) {
-          throw new Error(
-            "This session has no folder, so pass repo and name to name the worktree.",
-          );
-        }
-        worktree = worktreeAt(listing.worktrees, folder);
-        if (!worktree) {
-          throw new Error(
-            `This session's folder is not a Timber worktree: ${folder}. Pass repo and name, or make one with timber_create.`,
-          );
-        }
-      }
+      const folder =
+        args.repo === undefined && args.name === undefined
+          ? (await api.agent(context)).cwd
+          : undefined;
+      const worktree = await toolWorktree(args.repo, args.name, folder);
 
       const pushed =
         args.push === false ? { pushed: false } : await pushBranch(worktree);
@@ -2019,11 +2059,13 @@ export default function createTimber(host: unknown, web: Web) {
       // makes the branch its own upstream: with `--base` the command needs no
       // upstream at all. A branch that tracks its own name names no base.
       const base = args.base ?? (await baseBranch(worktree));
+      // The subject carries the summary, so a pull request that Pi opens has no
+      // body: the title alone tells the reviewer what the change is.
       const created = await openOrCreatePr(
         worktree.repo,
         worktree.name,
         title,
-        args.body ?? "",
+        "",
         { base, draft: args.draft === true },
       );
       await warmRow(worktree.repo, worktree.name);
@@ -2037,6 +2079,69 @@ export default function createTimber(host: unknown, web: Web) {
           {
             type: "text" as const,
             text: `${verb} the pull request of ${worktree.name}@${worktree.repo} on base ${base}: ${created.url} (#${created.number}).${pushedNote}`,
+          },
+        ],
+      };
+    },
+  });
+
+  // A version tag belongs to the repository, but it names one commit: the newest
+  // tag plus one, on the commit of the worktree that this tool names. timber
+  // reads the worktree from its own folder, so the selector names it, and the
+  // command fetches first: a stale tag list would repeat a version, and a
+  // checkout behind its upstream would tag a commit that is not the branch tip.
+  const timberBump = defineTool({
+    name: "timber_bump",
+    description:
+      "Bump the newest semantic version tag of a Timber worktree with `timber bump`, which fetches first, tags the worktree's commit, and pushes the tag to origin. Defaults to the worktree of this session's folder.",
+    parameters: Type.Object({
+      kind: Type.Union(
+        [Type.Literal("major"), Type.Literal("minor"), Type.Literal("patch")],
+        { description: "Which version component to bump" },
+      ),
+      repo: Type.Optional(
+        Type.String({
+          description:
+            "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
+        }),
+      ),
+      name: Type.Optional(
+        Type.String({ description: "Worktree/branch name, with repo" }),
+      ),
+    }),
+    execute: async (args, api, context) => {
+      const folder =
+        args.repo === undefined && args.name === undefined
+          ? (await api.agent(context)).cwd
+          : undefined;
+      const worktree = await toolWorktree(args.repo, args.name, folder);
+
+      const bumped = await runTimber([
+        "bump",
+        `--${args.kind}`,
+        `${worktree.name}@${worktree.repo}`,
+      ]);
+      if (bumped.code !== 0) {
+        throw new Error(
+          timberMessage(bumped.stderr) ||
+            `timber bump failed (exit ${bumped.code}); it needs Timber v0.23.0 or later`,
+        );
+      }
+      // The command prints the new tag, and the URL of a draft release after it.
+      const [tag = "", release = ""] = bumped.stdout.trim().split("\n");
+      if (tag === "") {
+        throw new Error(
+          `timber bump tagged ${worktree.name}@${worktree.repo} but printed no tag. Check the tags before retrying.`,
+        );
+      }
+      const releaseNote = release.trim()
+        ? ` Draft release: ${release.trim()}.`
+        : "";
+      return {
+        output: [
+          {
+            type: "text" as const,
+            text: `Bumped ${worktree.name}@${worktree.repo} to ${tag} and pushed it to origin.${releaseNote}`,
           },
         ],
       };
@@ -2190,7 +2295,9 @@ export default function createTimber(host: unknown, web: Web) {
   // state when it lands. Stale-while-revalidate: state serves the cache
   // immediately and only one refresh runs at a time. A read asked for while one
   // runs repeats the pass rather than joining it, so that a button drawn from
-  // the answer is never drawn from a read that began before the ask.
+  // the answer is never drawn from a read that began before the ask. A pass
+  // whose reads all failed still tells the tabs: the change that asked for it
+  // happened, whatever the read could make of it.
   const refreshPrCache = async (): Promise<void> => {
     if (prRefresh) {
       prRefresh.again = true;
@@ -2210,19 +2317,35 @@ export default function createTimber(host: unknown, web: Web) {
           } catch {
             // A timber read failed: the cache keeps what it had, and the next
             // pass tries again.
-            continue;
-          }
-          try {
-            web.send("fetched", { at: prCache?.at ?? Date.now() });
-          } catch {
-            // Tabs may be gone; the next poll picks up the fresh listing.
           }
         } while (run.again);
       } finally {
         prRefresh = null;
       }
+      try {
+        web.send("state", { at: prCache?.at ?? Date.now() });
+      } catch {
+        // Tabs may be gone; the next poll picks up the fresh listing.
+      }
     })();
     return run.done;
+  };
+
+  // Tell every open tab that the state it shows changed, so that each one
+  // re-reads it now rather than at its next poll. Rows that a change made stale
+  // are read again first, because their entries are older than the change; that
+  // pass tells the tabs itself when it lands, so no tab reads a state from
+  // before the change.
+  announceState = async (): Promise<void> => {
+    if (prCacheStale) {
+      await refreshPrCache();
+      return;
+    }
+    try {
+      web.send("state", { at: Date.now() });
+    } catch {
+      // Tabs may be gone; the next poll picks up the change.
+    }
   };
 
   web.route("GET", "state", async (): Promise<State & { models: string[] }> => {
@@ -2259,12 +2382,7 @@ export default function createTimber(host: unknown, web: Web) {
         // reads next is current instead of a minute old. A pass already running
         // repeats itself, so this answer is never a read that began before the
         // fetch.
-        await refreshPrCache();
-        try {
-          web.send("fetched", { at: result.fetchedAt });
-        } catch {
-          // Tabs may be gone; the next poll picks up the fresh listing.
-        }
+        await announceState();
         return result;
       } catch (error) {
         throw web.error(
@@ -2547,12 +2665,7 @@ export default function createTimber(host: unknown, web: Web) {
             // The row drew this button from a reading that can be a minute old,
             // and this read is the one that refused it: hand the row the fresh
             // reading, so it stops offering a merge that cannot happen.
-            try {
-              await refreshWorktreeState(repo, name);
-              web.send("fetched", { at: Date.now() });
-            } catch {
-              // The row's entry stays dropped, so the next poll reads it fresh.
-            }
+            await warmRow(repo, name);
             throw web.error(
               409,
               `Cannot merge PR #${selected.number}: ${selected.blocker}`,
@@ -2604,12 +2717,7 @@ export default function createTimber(host: unknown, web: Web) {
           // The row drew this button from a reading that can be a minute old,
           // and this read is the one that refused it: hand the row the fresh
           // reading, so it stops offering a merge that cannot happen.
-          try {
-            await refreshWorktreeState(repo, name);
-            web.send("fetched", { at: Date.now() });
-          } catch {
-            // The row's entry stays dropped, so the next poll reads it fresh.
-          }
+          await warmRow(repo, name);
           throw web.error(409, `Cannot merge ${name}@${repo}: ${blocker}`);
         }
         const head = await runCmd("git", ["rev-parse", "HEAD"], found.path);
@@ -2873,12 +2981,10 @@ export default function createTimber(host: unknown, web: Web) {
   // Skips when a run is already going. Cleared when this version goes.
   const fetchLoop = async () => {
     try {
+      // A fetch moves origin/<branch>, which is what a row's push state reads,
+      // so the rows are read again before the tabs are told.
       await fetchAllRepos();
-      try {
-        web.send("fetched", { at: lastFetchAt });
-      } catch {
-        // No tabs to tell; the next poll reads the fresh listing.
-      }
+      await announceState();
     } catch {
       // Best effort: fetch errors surface via state.fetchError.
     }
@@ -2915,6 +3021,7 @@ export default function createTimber(host: unknown, web: Web) {
       timberList,
       timberCreate,
       timberPrCreate,
+      timberBump,
       timberRemove,
       timberRepoAdd,
       timberRepoRename,
