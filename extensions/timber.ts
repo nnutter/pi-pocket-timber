@@ -2085,6 +2085,69 @@ export default function createTimber(host: unknown, web: Web) {
     },
   });
 
+  // A version tag belongs to the repository, but it names one commit: the newest
+  // tag plus one, on the commit of the worktree that this tool names. timber
+  // reads the worktree from its own folder, so the selector names it, and the
+  // command fetches first: a stale tag list would repeat a version, and a
+  // checkout behind its upstream would tag a commit that is not the branch tip.
+  const timberBump = defineTool({
+    name: "timber_bump",
+    description:
+      "Bump the newest semantic version tag of a Timber worktree with `timber bump`, which fetches first, tags the worktree's commit, and pushes the tag to origin. Defaults to the worktree of this session's folder.",
+    parameters: Type.Object({
+      kind: Type.Union(
+        [Type.Literal("major"), Type.Literal("minor"), Type.Literal("patch")],
+        { description: "Which version component to bump" },
+      ),
+      repo: Type.Optional(
+        Type.String({
+          description:
+            "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
+        }),
+      ),
+      name: Type.Optional(
+        Type.String({ description: "Worktree/branch name, with repo" }),
+      ),
+    }),
+    execute: async (args, api, context) => {
+      const folder =
+        args.repo === undefined && args.name === undefined
+          ? (await api.agent(context)).cwd
+          : undefined;
+      const worktree = await toolWorktree(args.repo, args.name, folder);
+
+      const bumped = await runTimber([
+        "bump",
+        `--${args.kind}`,
+        `${worktree.name}@${worktree.repo}`,
+      ]);
+      if (bumped.code !== 0) {
+        throw new Error(
+          timberMessage(bumped.stderr) ||
+            `timber bump failed (exit ${bumped.code}); it needs Timber v0.23.0 or later`,
+        );
+      }
+      // The command prints the new tag, and the URL of a draft release after it.
+      const [tag = "", release = ""] = bumped.stdout.trim().split("\n");
+      if (tag === "") {
+        throw new Error(
+          `timber bump tagged ${worktree.name}@${worktree.repo} but printed no tag. Check the tags before retrying.`,
+        );
+      }
+      const releaseNote = release.trim()
+        ? ` Draft release: ${release.trim()}.`
+        : "";
+      return {
+        output: [
+          {
+            type: "text" as const,
+            text: `Bumped ${worktree.name}@${worktree.repo} to ${tag} and pushed it to origin.${releaseNote}`,
+          },
+        ],
+      };
+    },
+  });
+
   // A session in a worktree's folder, linked to this one, so that Pi can send it
   // the next message and read what it sends back. The page's Open button starts
   // a plain session instead: a person opens a worktree to work in, not to
@@ -2958,6 +3021,7 @@ export default function createTimber(host: unknown, web: Web) {
       timberList,
       timberCreate,
       timberPrCreate,
+      timberBump,
       timberRemove,
       timberRepoAdd,
       timberRepoRename,

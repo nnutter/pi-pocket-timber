@@ -8,7 +8,7 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests, and `gh stack
 
 ## Requirements
 
-- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`, and `timber todo --repo` for the repository's TODO list; an older timber shows the worktree's list and says why the other one is missing)
+- [`timber`](https://github.com/nnutter/timber) 0.22.0 or newer on the machine Pi Pocket runs on (`timber pr create`, and `timber todo --repo` for the repository's TODO list; an older timber shows the worktree's list and says why the other one is missing), and 0.23.0 or newer for `timber bump`, which the `timber_bump` tool runs
 - [`gh`](https://cli.github.com/) signed in, to read and merge pull requests (`gh auth login`)
 - [`gh stack`](https://github.com/github/gh-stack) to merge a stack of pull requests (`gh extension install github/gh-stack`); without it, the page still reads stacks and merges a single PR, but a stack's merge buttons fail with gh's message
 - `git` (for the worktree's commits and push state)
@@ -83,7 +83,7 @@ Write the sidecar again after the files change: it records their hashes.
   A read that is already running repeats itself, so no row is drawn from a read that began before your push.
   A merge refreshes its own row at once: it fetches that worktree's repository, which is what lets timber call the branch merged, and re-reads that row, so the row offers Delete as soon as the merge lands.
   The other rows keep the state they had.
-- Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
+- Tools for Pi: `timber_list`, `timber_create`, `timber_pr_create`, `timber_bump`, which bumps a worktree's newest semantic version tag (`major`, `minor`, or `patch`) and pushes it, `timber_remove`, `timber_repo_add`, `timber_repo_rename`, `timber_repo_remove`, `timber_fetch`, and `timber_start_session`, which starts a session in a worktree's folder, linked to the one that asked
   A tool that changes what the page shows tells every open page and the panel to re-read the state at once, so a create, a removal, a fetch, or a repository change shows without waiting for the poll.
   A tool that changes one row reads that row before it tells them, and a fetch or a rename reads every row, because their cached reads are older than the change.
 - Rule for Pi: a session whose folder is a managed worktree is told which worktree it works in, and to open its pull request with `timber_pr_create` rather than `gh pr create`.
