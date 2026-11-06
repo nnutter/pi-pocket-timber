@@ -1491,9 +1491,10 @@ async function openOrCreatePr(
   // The row said no pull request was open, but one may have been opened since.
   // timber refuses a second one, so open the one that exists.
   if (/already exists/i.test(message)) {
+    const [branch, repo] = await Promise.all([branchOf(cwd), originRepo(cwd)]);
     const viewed = await runCmd(
       "gh",
-      ["pr", "view", "--json", "number,url,state"],
+      prViewArgs(branch, repo, "number,url,state"),
       cwd,
     );
     const opened = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
