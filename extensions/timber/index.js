@@ -79,6 +79,21 @@ export default function setup(pocket) {
   });
 
   /**
+   * The style of a part of a split control: a button that shares the height
+   * of the control. The app gives every button a least height, so a part
+   * clears it, or the control grows past the square box beside it.
+   */
+  const splitPart = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "0",
+    border: "none",
+    borderRadius: "0",
+    background: "transparent",
+  };
+
+  /**
    * The color of a removal, drawn to the row's background: a pale periwinkle
    * that stays readable on it, where a dim shade would sink into it.
    */
@@ -1115,7 +1130,7 @@ export default function setup(pocket) {
           style=${{ position: "relative", display: "inline-flex", flex: "none" }}
         >
           <div
-            style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+            style=${{ display: "inline-flex", alignItems: "stretch", alignSelf: "center", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
           >
             <button
               type="button"
@@ -1127,7 +1142,7 @@ export default function setup(pocket) {
                 setOpenMenu(null);
                 setCreating((v) => !v);
               }}
-              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+              style=${{ ...iconButton(BUTTON_SIZE), ...splitPart }}
             >
               <svg
                 width="16"
@@ -1155,7 +1170,7 @@ export default function setup(pocket) {
               aria-haspopup="menu"
               aria-expanded=${openMenu === "add"}
               onClick=${() => setOpenMenu(openMenu === "add" ? null : "add")}
-              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+              style=${{ ...splitPart, padding: "0 8px" }}
             >
               <svg
                 width="12"
@@ -1244,7 +1259,7 @@ export default function setup(pocket) {
           style=${{ position: "relative", display: "inline-flex", flex: "none" }}
         >
           <div
-            style=${{ display: "inline-flex", alignItems: "stretch", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
+            style=${{ display: "inline-flex", alignItems: "stretch", alignSelf: "center", border: "1px solid var(--line)", borderRadius: "4px", overflow: "hidden" }}
           >
             <button
               type="button"
@@ -1254,7 +1269,7 @@ export default function setup(pocket) {
               aria-haspopup="menu"
               aria-expanded=${openMenu === "sort"}
               onClick=${() => setOpenMenu(openMenu === "sort" ? null : "sort")}
-              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 8px", border: "none", borderRadius: "0", background: "transparent" }}
+              style=${{ ...splitPart, padding: "0 8px" }}
             >
               <svg
                 width="12"
@@ -1278,7 +1293,7 @@ export default function setup(pocket) {
               title=${`Sort: ${currentSort.label}. Click to change the order.`}
               aria-label=${`Sort: ${currentSort.label}`}
               onClick=${cycleSort}
-              style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 10px", border: "none", borderRadius: "0", background: "transparent" }}
+              style=${{ ...iconButton(BUTTON_SIZE), ...splitPart }}
             >
               ${sortIcon(currentSort)}
             </button>
