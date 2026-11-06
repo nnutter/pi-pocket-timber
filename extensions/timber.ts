@@ -748,6 +748,23 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 const PR_VIEW_FIELDS =
   "number,url,title,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
 
+// The arguments of `gh pr view` for a branch in a named repository. gh needs
+// the branch with --repo, since --repo leaves it without a folder to read.
+// gh picks the repository from the clone's remotes when none is named, so a
+// clone with a second remote (a fork's upstream) reads the pull requests of
+// that other repository.
+function prViewArgs(
+  branch: string | null,
+  repo: string | null,
+  fields: string,
+): string[] {
+  const args = ["pr", "view"];
+  if (branch !== null) args.push(branch);
+  if (branch !== null && repo !== null) args.push("--repo", repo);
+  args.push("--json", fields);
+  return args;
+}
+
 // What the pull request's checks are doing: all passed, at least one failed,
 // some still to finish (or queued), or none at all. "none" is not "no checks
 // ran": a push whose CI has not registered yet reads the same way.
@@ -1175,11 +1192,18 @@ async function readPushAndPr(w: Worktree): Promise<{
   stack: StackInfo | null;
 }> {
   const key = `${w.repo}\0${w.name}`;
-  const [viewed, push, repo] = await Promise.all([
-    runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
+  const [push, repo, branch] = await Promise.all([
     pushInfo(w.path, w.name),
     originRepo(w.path),
+    branchOf(w.path),
   ]);
+  // The origin remote is the repository the branch belongs to. It is named, so
+  // gh reads that repository's pull requests and not those of another remote.
+  const viewed = await runCmd(
+    "gh",
+    prViewArgs(branch, repo, PR_VIEW_FIELDS),
+    w.path,
+  );
   const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
   const head = viewed.code === 0 ? parsePrHead(viewed.stdout) : null;
   // The checked-out branch's PR can be merged while the PRs above it stay open,
