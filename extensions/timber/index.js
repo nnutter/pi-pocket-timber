@@ -61,6 +61,13 @@ export default function setup(pocket) {
   const BUTTON_SIZE = 34;
 
   /**
+   * The height of the panel's header, in pixels: the square box of a button
+   * and the border of the control that holds it. The search field of the
+   * header is as tall as this, so the three parts of the header line up.
+   */
+  const HEADER_HEIGHT = BUTTON_SIZE + 2;
+
+  /**
    * The style of a button that holds one glyph: a square box of `size` pixels.
    * The app gives every button a least height, and a touch screen a larger
    * one, so the box sets its own least height too. Without that, the least
@@ -1251,6 +1258,7 @@ export default function setup(pocket) {
           value=${search}
           placeholder="Search worktrees"
           onInput=${(e) => setSearch(e.target.value)}
+          style=${{ height: `${HEADER_HEIGHT}px`, padding: "0 10px" }}
         />
         <div
           ref=${(el) => {
