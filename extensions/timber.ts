@@ -1259,16 +1259,24 @@ async function originRepo(cwd: string): Promise<string | null> {
   return remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
 }
 
-// The branch checked out in a worktree. `gh pr view --repo` needs one, since
-// with --repo it cannot infer the pull request from the folder alone.
-async function currentBranch(cwd: string): Promise<string> {
+// The branch checked out in a folder, or null when Git names none: a detached
+// HEAD, or a folder that is not a Git checkout.
+async function branchOf(cwd: string): Promise<string | null> {
   const result = await runCmd(
     "git",
     ["rev-parse", "--abbrev-ref", "HEAD"],
     cwd,
   );
   const name = result.stdout.trim();
-  if (result.code !== 0 || name === "" || name === "HEAD") {
+  if (result.code !== 0 || name === "" || name === "HEAD") return null;
+  return name;
+}
+
+// The branch checked out in a worktree. `gh pr view --repo` needs one, since
+// with --repo it cannot infer the pull request from the folder alone.
+async function currentBranch(cwd: string): Promise<string> {
+  const name = await branchOf(cwd);
+  if (name === null) {
     throw new Error(`No branch is checked out in ${cwd}.`);
   }
   return name;
