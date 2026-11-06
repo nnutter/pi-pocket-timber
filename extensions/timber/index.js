@@ -43,7 +43,8 @@ export default function setup(pocket) {
       ${MERGE_ICON_PATHS.map((d) => html`<path d=${d} />`)}
     </svg>`;
 
-  // Status items in a worktree row share the 24px height of the row buttons.
+  // The status items in a worktree row: the counts of its TODOs and of its
+  // reviews, each of them its own height, beside the row's buttons.
   const ROW_ITEM = {
     display: "inline-flex",
     alignItems: "center",
@@ -52,6 +53,12 @@ export default function setup(pocket) {
     fontSize: "13px",
     whiteSpace: "nowrap",
   };
+
+  /**
+   * The size of a square button, in pixels: the box of a glyph. It is a fifth
+   * more than the 28px it was, so a thumb has room to tap it.
+   */
+  const BUTTON_SIZE = 34;
 
   /**
    * The style of a button that holds one glyph: a square box of `size` pixels.
@@ -970,7 +977,7 @@ export default function setup(pocket) {
               ? `Merge the whole stack (top PR #${pr.number})`
               : `Merge the stack up to PR #${pr.number}`;
       return html`<div
-        style=${{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 24px", alignItems: "center", gap: "8px", minHeight: "26px" }}
+        style=${{ display: "grid", gridTemplateColumns: `minmax(0,1fr) auto ${BUTTON_SIZE}px`, alignItems: "center", gap: "8px", minHeight: "26px" }}
       >
         <span
           style=${{ minWidth: "0", overflowWrap: "anywhere", fontSize: "12.5px", color: current ? "var(--text)" : "var(--muted)" }}
@@ -999,14 +1006,14 @@ export default function setup(pocket) {
             ? html`<span
                 title="Merged"
                 aria-label="Merged"
-                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", color: "var(--magenta)" }}
+                style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: `${BUTTON_SIZE}px`, height: `${BUTTON_SIZE}px`, color: "var(--magenta)" }}
                 ><${Icon} name="check" size=${15}
               /></span>`
             : closed
               ? html`<span
                   title="Closed"
                   aria-label="Closed"
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", color: "var(--faint)" }}
+                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: `${BUTTON_SIZE}px`, height: `${BUTTON_SIZE}px`, color: "var(--faint)" }}
                   >–</span
                 >`
               : html`<button
@@ -1018,7 +1025,7 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doMerge(w, pr.number);
                   }}
-                  style=${{ ...iconButton(24), color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
+                  style=${{ ...iconButton(BUTTON_SIZE), color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
                 >
                   ${inFlight(
                     stackAction("merge", w, pr.number),
@@ -1497,7 +1504,7 @@ export default function setup(pocket) {
                       title=${`Remove repository ${repo}`}
                       aria-label=${`Remove repository ${repo}`}
                       onClick=${() => doRemoveRepo(repo)}
-                      style=${{ ...iconButton(28), color: REMOVE_COLOR }}
+                      style=${{ ...iconButton(BUTTON_SIZE), color: REMOVE_COLOR }}
                     >
                       ${inFlight(repoAction("repo-remove", repo), `Remove repository ${repo}`, html`<${Icon} path=${TRASH_PATH} size=${14} />`)}
                     </button>`
@@ -1698,7 +1705,7 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doOpen(w);
                   }}
-                  style=${{ ...iconButton(28) }}
+                  style=${{ ...iconButton(BUTTON_SIZE) }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
@@ -1760,7 +1767,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doRemove(w);
                       }}
-                      style=${{ ...iconButton(28), ...actionStyle }}
+                      style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path=${TRASH_PATH} size=${16} />`)}
                     </button>`
@@ -1776,7 +1783,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doPush(w);
                       }}
-                      style=${{ ...iconButton(28), ...actionStyle }}
+                      style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(
                         rowAction("push", w),
@@ -1814,7 +1821,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doMerge(w);
                       }}
-                      style=${{ ...iconButton(28), ...actionStyle }}
+                      style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(
                         rowAction("merge", w),
@@ -1856,7 +1863,7 @@ export default function setup(pocket) {
                         setError(null);
                         setPrWorktree(w);
                       }}
-                      style=${{ ...iconButton(28), ...actionStyle }}
+                      style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${
                         // An open pull request wears the merge glyph, colored by
@@ -1886,7 +1893,7 @@ export default function setup(pocket) {
                       disabled
                       title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
                       aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                      style=${{ ...iconButton(28), ...actionStyle }}
+                      style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       <${Icon}
                         path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
@@ -2027,7 +2034,7 @@ export default function setup(pocket) {
           title="Refresh: list worktrees and fetch their remotes"
           aria-label="Refresh"
           onClick=${doRefresh}
-          style=${{ ...iconButton(28) }}
+          style=${{ ...iconButton(BUTTON_SIZE) }}
         >
           ${inFlight("refresh", "Refresh", html`<${Icon} name="reload" size=${16} />`)}
         </button>
@@ -2375,7 +2382,7 @@ export default function setup(pocket) {
                   }
                   onClick=${() => removeTodo(todo)}
                   style=${{
-                    ...iconButton(28),
+                    ...iconButton(BUTTON_SIZE),
                     // The armed button shows a word instead of a glyph, so it
                     // grows to fit the word.
                     width: armedRow ? "auto" : undefined,
