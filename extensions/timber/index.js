@@ -2027,7 +2027,7 @@ export default function setup(pocket) {
           title="Refresh: list worktrees and fetch their remotes"
           aria-label="Refresh"
           onClick=${doRefresh}
-          style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: "24px", height: "24px", padding: "0 8px", flexShrink: 0 }}
+          style=${{ ...iconButton(28) }}
         >
           ${inFlight("refresh", "Refresh", html`<${Icon} name="reload" size=${16} />`)}
         </button>
@@ -2375,14 +2375,12 @@ export default function setup(pocket) {
                   }
                   onClick=${() => removeTodo(todo)}
                   style=${{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    minWidth: "28px",
-                    height: "28px",
+                    ...iconButton(28),
+                    // The armed button shows a word instead of a glyph, so it
+                    // grows to fit the word.
+                    width: armedRow ? "auto" : undefined,
+                    padding: armedRow ? "0 8px" : "0",
                     marginTop: "3px",
-                    padding: armedRow ? "0 6px" : "0",
-                    flex: "none",
                     fontSize: "12px",
                     fontWeight: armedRow ? "700" : "400",
                     color: armedRow ? "var(--err)" : "var(--muted)",
