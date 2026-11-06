@@ -54,6 +54,24 @@ export default function setup(pocket) {
   };
 
   /**
+   * The style of a button that holds one glyph: a square box of `size` pixels.
+   * The app gives every button a least height, and a touch screen a larger
+   * one, so the box sets its own least height too. Without that, the least
+   * height wins over the height, and the button comes out taller than wide.
+   */
+  const iconButton = (size) => ({
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: `${size}px`,
+    height: `${size}px`,
+    minWidth: "0",
+    minHeight: "0",
+    padding: "0",
+    flexShrink: 0,
+  });
+
+  /**
    * The color of a removal, drawn to the row's background: a pale periwinkle
    * that stays readable on it, where a dim shade would sink into it.
    */
@@ -1000,7 +1018,7 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doMerge(w, pr.number);
                   }}
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", minHeight: "0", padding: "0", flexShrink: 0, color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
+                  style=${{ ...iconButton(24), color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
                 >
                   ${inFlight(
                     stackAction("merge", w, pr.number),
