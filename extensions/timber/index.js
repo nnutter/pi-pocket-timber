@@ -1497,7 +1497,7 @@ export default function setup(pocket) {
                       title=${`Remove repository ${repo}`}
                       aria-label=${`Remove repository ${repo}`}
                       onClick=${() => doRemoveRepo(repo)}
-                      style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", padding: "0", color: REMOVE_COLOR }}
+                      style=${{ ...iconButton(28), color: REMOVE_COLOR }}
                     >
                       ${inFlight(repoAction("repo-remove", repo), `Remove repository ${repo}`, html`<${Icon} path=${TRASH_PATH} size=${14} />`)}
                     </button>`
@@ -1698,7 +1698,7 @@ export default function setup(pocket) {
                   onClick=${() => {
                     if (!listingBusy) doOpen(w);
                   }}
-                  style=${{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                  style=${{ ...iconButton(28) }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
                 </button>
@@ -1760,7 +1760,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doRemove(w);
                       }}
-                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...iconButton(28), ...actionStyle }}
                     >
                       ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path=${TRASH_PATH} size=${16} />`)}
                     </button>`
@@ -1776,7 +1776,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doPush(w);
                       }}
-                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...iconButton(28), ...actionStyle }}
                     >
                       ${inFlight(
                         rowAction("push", w),
@@ -1814,7 +1814,7 @@ export default function setup(pocket) {
                       onClick=${() => {
                         if (!listingBusy) doMerge(w);
                       }}
-                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...iconButton(28), ...actionStyle }}
                     >
                       ${inFlight(
                         rowAction("merge", w),
@@ -1856,7 +1856,7 @@ export default function setup(pocket) {
                         setError(null);
                         setPrWorktree(w);
                       }}
-                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...iconButton(28), ...actionStyle }}
                     >
                       ${
                         // An open pull request wears the merge glyph, colored by
@@ -1886,7 +1886,7 @@ export default function setup(pocket) {
                       disabled
                       title=${`origin/${w.name} has commits ${w.name}@${w.repo} lacks. Pull or rebase to sync before opening or updating a PR.`}
                       aria-label=${`Blocked: origin/${w.name} is ahead of ${w.name}@${w.repo}`}
-                      style=${{ ...actionStyle, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px", padding: "0", flexShrink: 0 }}
+                      style=${{ ...iconButton(28), ...actionStyle }}
                     >
                       <${Icon}
                         path="M12 3l10 18H2L12 3zM12 10v4M12 17.5v.5"
