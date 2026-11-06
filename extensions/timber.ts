@@ -1175,14 +1175,13 @@ async function readPushAndPr(w: Worktree): Promise<{
   stack: StackInfo | null;
 }> {
   const key = `${w.repo}\0${w.name}`;
-  const [viewed, push, remote] = await Promise.all([
+  const [viewed, push, repo] = await Promise.all([
     runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
     pushInfo(w.path, w.name),
-    runCmd("git", ["remote", "get-url", "origin"], w.path),
+    originRepo(w.path),
   ]);
   const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
   const head = viewed.code === 0 ? parsePrHead(viewed.stdout) : null;
-  const repo = remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
   // The checked-out branch's PR can be merged while the PRs above it stay open,
   // and the stack still has to be read: the head names the PR either way.
   const stack =
@@ -1251,6 +1250,13 @@ function repoFromRemoteUrl(url: string): string | null {
   const [owner, repo] = parts.slice(-2);
   if (!owner || !repo) return null;
   return `${owner}/${repo}`;
+}
+
+// The GitHub repository of a folder's origin remote, or null when the remote
+// names no GitHub repository.
+async function originRepo(cwd: string): Promise<string | null> {
+  const remote = await runCmd("git", ["remote", "get-url", "origin"], cwd);
+  return remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
 }
 
 // The branch checked out in a worktree. `gh pr view --repo` needs one, since
