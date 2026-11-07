@@ -748,6 +748,23 @@ function parseDraft(stdout: string): { title: string; body: string } | null {
 const PR_VIEW_FIELDS =
   "number,url,title,state,isDraft,statusCheckRollup,mergeStateStatus,headRefName";
 
+// The arguments of `gh pr view` for a branch in a named repository. gh needs
+// the branch with --repo, since --repo leaves it without a folder to read.
+// gh picks the repository from the clone's remotes when none is named, so a
+// clone with a second remote (a fork's upstream) reads the pull requests of
+// that other repository.
+function prViewArgs(
+  branch: string | null,
+  repo: string | null,
+  fields: string,
+): string[] {
+  const args = ["pr", "view"];
+  if (branch !== null) args.push(branch);
+  if (branch !== null && repo !== null) args.push("--repo", repo);
+  args.push("--json", fields);
+  return args;
+}
+
 // What the pull request's checks are doing: all passed, at least one failed,
 // some still to finish (or queued), or none at all. "none" is not "no checks
 // ran": a push whose CI has not registered yet reads the same way.
@@ -1175,14 +1192,20 @@ async function readPushAndPr(w: Worktree): Promise<{
   stack: StackInfo | null;
 }> {
   const key = `${w.repo}\0${w.name}`;
-  const [viewed, push, remote] = await Promise.all([
-    runCmd("gh", ["pr", "view", "--json", PR_VIEW_FIELDS], w.path),
+  const [push, repo, branch] = await Promise.all([
     pushInfo(w.path, w.name),
-    runCmd("git", ["remote", "get-url", "origin"], w.path),
+    originRepo(w.path),
+    branchOf(w.path),
   ]);
+  // The origin remote is the repository the branch belongs to. It is named, so
+  // gh reads that repository's pull requests and not those of another remote.
+  const viewed = await runCmd(
+    "gh",
+    prViewArgs(branch, repo, PR_VIEW_FIELDS),
+    w.path,
+  );
   const pr = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
   const head = viewed.code === 0 ? parsePrHead(viewed.stdout) : null;
-  const repo = remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
   // The checked-out branch's PR can be merged while the PRs above it stay open,
   // and the stack still has to be read: the head names the PR either way.
   const stack =
@@ -1253,16 +1276,31 @@ function repoFromRemoteUrl(url: string): string | null {
   return `${owner}/${repo}`;
 }
 
-// The branch checked out in a worktree. `gh pr view --repo` needs one, since
-// with --repo it cannot infer the pull request from the folder alone.
-async function currentBranch(cwd: string): Promise<string> {
+// The GitHub repository of a folder's origin remote, or null when the remote
+// names no GitHub repository.
+async function originRepo(cwd: string): Promise<string | null> {
+  const remote = await runCmd("git", ["remote", "get-url", "origin"], cwd);
+  return remote.code === 0 ? repoFromRemoteUrl(remote.stdout) : null;
+}
+
+// The branch checked out in a folder, or null when Git names none: a detached
+// HEAD, or a folder that is not a Git checkout.
+async function branchOf(cwd: string): Promise<string | null> {
   const result = await runCmd(
     "git",
     ["rev-parse", "--abbrev-ref", "HEAD"],
     cwd,
   );
   const name = result.stdout.trim();
-  if (result.code !== 0 || name === "" || name === "HEAD") {
+  if (result.code !== 0 || name === "" || name === "HEAD") return null;
+  return name;
+}
+
+// The branch checked out in a worktree. `gh pr view --repo` needs one, since
+// with --repo it cannot infer the pull request from the folder alone.
+async function currentBranch(cwd: string): Promise<string> {
+  const name = await branchOf(cwd);
+  if (name === null) {
     throw new Error(`No branch is checked out in ${cwd}.`);
   }
   return name;
@@ -1453,9 +1491,10 @@ async function openOrCreatePr(
   // The row said no pull request was open, but one may have been opened since.
   // timber refuses a second one, so open the one that exists.
   if (/already exists/i.test(message)) {
+    const [branch, repo] = await Promise.all([branchOf(cwd), originRepo(cwd)]);
     const viewed = await runCmd(
       "gh",
-      ["pr", "view", "--json", "number,url,state"],
+      prViewArgs(branch, repo, "number,url,state"),
       cwd,
     );
     const opened = viewed.code === 0 ? parsePrView(viewed.stdout) : null;
