@@ -6,12 +6,12 @@ import { execFile as execFileCb, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Type } from "@earendil-works/pi-ai";
 import {
   defineExtension,
   defineTool,
   section,
 } from "@earendil-works/pi-durable";
+import { bool, lit, obj, opt, str, union } from "@earendil-works/pi-schema";
 import type { LinkedSessions, Web } from "./_pocket.d.ts";
 
 const execFileAsync = promisify(execFileCb);
@@ -1829,14 +1829,14 @@ const timberList = defineTool({
   name: "timber_list",
   description:
     "List Timber-managed Git worktrees (branch, repo, clean/merged, ahead/behind).",
-  parameters: Type.Object({
-    repo: Type.Optional(
-      Type.String({
+  parameters: obj({
+    repo: opt(
+      str({
         description: "Only this registered repo, e.g. nnutter/timber",
       }),
     ),
-    search: Type.Optional(
-      Type.String({ description: "Substring filter over name@repo and path" }),
+    search: opt(
+      str({ description: "Substring filter over name@repo and path" }),
     ),
   }),
   replay: "safe",
@@ -1866,14 +1866,10 @@ const timberCreate = defineTool({
   name: "timber_create",
   description:
     "Create a Timber worktree in a registered repo. Leave name empty to let Timber choose.",
-  parameters: Type.Object({
-    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
-    name: Type.Optional(
-      Type.String({ description: "Branch/worktree name (optional)" }),
-    ),
-    upstream: Type.Optional(
-      Type.String({ description: "Upstream branch (optional)" }),
-    ),
+  parameters: obj({
+    repo: str({ description: "Registered repo, e.g. nnutter/timber" }),
+    name: opt(str({ description: "Branch/worktree name (optional)" })),
+    upstream: opt(str({ description: "Upstream branch (optional)" })),
   }),
   execute: async (args) => {
     const created = await createWorktree(
@@ -1900,9 +1896,9 @@ const timberRemove = defineTool({
   name: "timber_remove",
   description:
     "Remove a clean, merged Timber worktree (checkout and local branch). Refuses dirty or unmerged worktrees.",
-  parameters: Type.Object({
-    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
-    name: Type.String({ description: "Worktree/branch name" }),
+  parameters: obj({
+    repo: str({ description: "Registered repo, e.g. nnutter/timber" }),
+    name: str({ description: "Worktree/branch name" }),
   }),
   execute: async (args) => {
     const removed = await removeWorktree(args.repo, args.name);
@@ -1918,14 +1914,10 @@ const timberRepoAdd = defineTool({
   name: "timber_repo_add",
   description:
     "Register a bare repository with Timber from a remote URL or local path.",
-  parameters: Type.Object({
-    source: Type.String({ description: "Remote URL or local path" }),
-    name: Type.Optional(
-      Type.String({ description: "Repository name (optional)" }),
-    ),
-    alias: Type.Optional(
-      Type.String({ description: "Display alias (optional)" }),
-    ),
+  parameters: obj({
+    source: str({ description: "Remote URL or local path" }),
+    name: opt(str({ description: "Repository name (optional)" })),
+    alias: opt(str({ description: "Display alias (optional)" })),
   }),
   execute: async (args) => {
     const added = await addRepository(
@@ -1949,9 +1941,9 @@ const timberRepoRename = defineTool({
   name: "timber_repo_rename",
   description:
     "Rename a registered Timber repository. Timber moves the folders of its managed worktrees with it, so sessions in the old folders no longer open them.",
-  parameters: Type.Object({
-    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
-    to: Type.String({ description: "New name, e.g. nnutter/timber-archive" }),
+  parameters: obj({
+    repo: str({ description: "Registered repo, e.g. nnutter/timber" }),
+    to: str({ description: "New name, e.g. nnutter/timber-archive" }),
   }),
   execute: async (args) => {
     const renamed = await renameRepository(args.repo, args.to);
@@ -1977,8 +1969,8 @@ const timberRepoRemove = defineTool({
   name: "timber_repo_remove",
   description:
     "Remove a registered Timber repository that has no worktrees. Refuses a repository that still has worktrees.",
-  parameters: Type.Object({
-    repo: Type.String({ description: "Registered repo, e.g. nnutter/timber" }),
+  parameters: obj({
+    repo: str({ description: "Registered repo, e.g. nnutter/timber" }),
   }),
   execute: async (args) => {
     const removed = await removeRepository(args.repo);
@@ -1998,7 +1990,7 @@ const timberFetch = defineTool({
   name: "timber_fetch",
   description:
     "Fetch the remotes of the Timber repositories that have worktrees, so merged PRs show as Merged (timber git @repo -- fetch).",
-  parameters: Type.Object({}),
+  parameters: obj({}),
   replay: "safe",
   execute: async () => {
     const result = await fetchAllRepos();
@@ -2070,31 +2062,27 @@ export default function createTimber(host: unknown, web: Web) {
     name: "timber_pr_create",
     description:
       "Open the pull request for a Timber worktree with `timber pr create`, after pushing its branch to origin/<branch> when origin lacks it or is behind. Defaults to the worktree of this session's folder. Use this instead of `gh pr create`.",
-    parameters: Type.Object({
-      title: Type.String({
+    parameters: obj({
+      title: str({
         description:
           "Pull request title, one line of at most 72 characters, in the repository's commit subject style",
       }),
-      repo: Type.Optional(
-        Type.String({
+      repo: opt(
+        str({
           description:
             "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
         }),
       ),
-      name: Type.Optional(
-        Type.String({ description: "Worktree/branch name, with repo" }),
-      ),
-      base: Type.Optional(
-        Type.String({
+      name: opt(str({ description: "Worktree/branch name, with repo" })),
+      base: opt(
+        str({
           description:
             "Base branch; the branch's upstream branch, or origin's default branch",
         }),
       ),
-      draft: Type.Optional(
-        Type.Boolean({ description: "Open the pull request as a draft" }),
-      ),
-      push: Type.Optional(
-        Type.Boolean({
+      draft: opt(bool({ description: "Open the pull request as a draft" })),
+      push: opt(
+        bool({
           description:
             "Push the branch first when origin lacks it or is behind (default true)",
         }),
@@ -2155,20 +2143,17 @@ export default function createTimber(host: unknown, web: Web) {
     name: "timber_bump",
     description:
       "Bump the newest semantic version tag of a Timber worktree with `timber bump`, which fetches first, tags the worktree's commit, and pushes the tag to origin. Defaults to the worktree of this session's folder.",
-    parameters: Type.Object({
-      kind: Type.Union(
-        [Type.Literal("major"), Type.Literal("minor"), Type.Literal("patch")],
-        { description: "Which version component to bump" },
-      ),
-      repo: Type.Optional(
-        Type.String({
+    parameters: obj({
+      kind: union([lit("major"), lit("minor"), lit("patch")], {
+        description: "Which version component to bump",
+      }),
+      repo: opt(
+        str({
           description:
             "Registered repo, e.g. nnutter/timber; with name, for a worktree other than this session's",
         }),
       ),
-      name: Type.Optional(
-        Type.String({ description: "Worktree/branch name, with repo" }),
-      ),
+      name: opt(str({ description: "Worktree/branch name, with repo" })),
     }),
     execute: async (args, api, context) => {
       const folder =
@@ -2217,29 +2202,27 @@ export default function createTimber(host: unknown, web: Web) {
     name: "timber_start_session",
     description:
       "Start a session in a Timber worktree's folder, linked to this session, with its first message. Refuses a worktree that does not exist: use timber_create first.",
-    parameters: Type.Object({
-      name: Type.String({ description: "Worktree/branch name" }),
-      message: Type.String({
+    parameters: obj({
+      name: str({ description: "Worktree/branch name" }),
+      message: str({
         description:
           "The new session's first message: everything that it needs, since it does not see this conversation",
       }),
-      repo: Type.Optional(
-        Type.String({
+      repo: opt(
+        str({
           description:
             "Registered repo, e.g. nnutter/timber; needed when two repos have a worktree of that name",
         }),
       ),
-      title: Type.Optional(
-        Type.String({ description: "Its title; the default is name@repo" }),
-      ),
-      model: Type.Optional(
-        Type.String({
+      title: opt(str({ description: "Its title; the default is name@repo" })),
+      model: opt(
+        str({
           description:
             "provider/modelId, one of the models the owner allows for subagents; left out, this session's model",
         }),
       ),
-      thinking: Type.Optional(
-        Type.String({
+      thinking: opt(
+        str({
           description:
             "A thinking level (off, minimal, low, medium, high, xhigh, max); left out, this session's level",
         }),
@@ -2868,6 +2851,33 @@ export default function createTimber(host: unknown, web: Web) {
           .map((session) => ({ id: session.id, title: session.title })),
       };
     },
+  );
+
+  web.route(
+    "POST",
+    "start-session",
+    async (request): Promise<{ id: number }> => {
+      if (typeof request.createSession !== "function") {
+        throw web.error(
+          501,
+          "Starting a worktree session needs Pi Pocket 0.28.0 or newer.",
+        );
+      }
+      const repo = textField(request.body, "repo");
+      const name = textField(request.body, "name");
+      if (!repo || !name) throw web.error(400, "repo and name are required");
+      const { worktrees } = await readListing();
+      const worktree = worktrees.find(
+        (w) => w.repo === repo && w.name === name,
+      );
+      if (!worktree)
+        throw web.error(404, `Worktree not found: ${name}@${repo}`);
+      return request.createSession({
+        cwd: worktree.path,
+        title: `${name}@${repo}`,
+      });
+    },
+    { access: "owner" },
   );
 
   // A TODO failure as the status that the panel shows. What the person can
