@@ -317,9 +317,6 @@ export default function setup(pocket) {
     /** True while an action runs on this registered repository. */
     const repoBusy = (repo) =>
       REPO_VERBS.some((verb) => running.has(repoAction(verb, repo)));
-    // True while a background list reload is in flight. Row buttons lock
-    // so a tap can't land on a row that is about to move.
-    const [listingBusy, setListingBusy] = useState(false);
     // A phone-width panel shows how far the branch leads, not how far it lags:
     // the two numbers and two buttons do not share the line there.
     const [showBehind, setShowBehind] = useState(
@@ -328,7 +325,6 @@ export default function setup(pocket) {
         typeof window.matchMedia !== "function" ||
         !window.matchMedia("(max-width: 600px)").matches,
     );
-    const listingCount = useRef(0);
     const [search, setSearch] = useState("");
     // The folder of the session this tab shows, or null. The pin needs it and
     // the page cannot read it, so the server answers it.
@@ -432,23 +428,24 @@ export default function setup(pocket) {
 
     useEffect(() => {
       let alive = true;
+      let started = 0;
+      let settled = 0;
       const load = async () => {
-        listingCount.current += 1;
-        if (alive) setListingBusy(true);
+        const request = ++started;
         try {
           const state = await pocket.api("state");
-          if (alive) {
-            setData(state);
-            setError(null);
-          }
+          if (!alive || request < settled) return;
+          settled = request;
+          // Keep the current rows usable until the complete snapshot is ready.
+          // The browser applies the keyed row updates in one render.
+          setData(state);
+          setError(null);
         } catch (failure) {
-          if (alive)
-            setError(
-              failure && failure.message ? failure.message : "Timber failed",
-            );
-        } finally {
-          listingCount.current -= 1;
-          if (alive && listingCount.current === 0) setListingBusy(false);
+          if (!alive || request < settled) return;
+          settled = request;
+          setError(
+            failure && failure.message ? failure.message : "Timber failed",
+          );
         }
       };
       void load();
@@ -1041,12 +1038,10 @@ export default function setup(pocket) {
               : html`<button
                   type="button"
                   class="button small"
-                  disabled=${toolbarBusy || rowBusy(w) || listingBusy || pr.blocker !== null}
+                  disabled=${toolbarBusy || rowBusy(w) || pr.blocker !== null}
                   title=${label}
                   aria-label=${label}
-                  onClick=${() => {
-                    if (!listingBusy) doMerge(w, pr.number);
-                  }}
+                  onClick=${() => doMerge(w, pr.number)}
                   style=${{ ...iconButton(BUTTON_SIZE), color, opacity: pr.blocker ? "0.85" : "1", background: top && pr.blocker === null ? "color-mix(in srgb, var(--ok) 16%, var(--card-2))" : "transparent", border: top && pr.blocker === null ? "1px solid color-mix(in srgb, var(--ok) 45%, transparent)" : "1px solid transparent", borderRadius: "4px" }}
                 >
                   ${inFlight(
@@ -1724,10 +1719,7 @@ export default function setup(pocket) {
                   disabled=${toolbarBusy || rowBusy(w)}
                   title=${`Open session in ${w.path}`}
                   aria-label=${`Open session in ${w.name}@${w.repo}`}
-                  aria-disabled=${listingBusy || undefined}
-                  onClick=${() => {
-                    if (!listingBusy) doOpen(w);
-                  }}
+                  onClick=${() => doOpen(w)}
                   style=${{ ...iconButton(BUTTON_SIZE) }}
                 >
                   ${inFlight(rowAction("open", w), `Open session in ${w.name}@${w.repo}`, html`<${Icon} name="chat" size=${16} />`)}
@@ -1784,12 +1776,9 @@ export default function setup(pocket) {
                     html`<button
                       class="button small"
                       disabled=${toolbarBusy || rowBusy(w)}
-                      aria-disabled=${listingBusy || undefined}
                       title=${`Remove ${w.name}@${w.repo}`}
                       aria-label=${`Remove ${w.name}@${w.repo}`}
-                      onClick=${() => {
-                        if (!listingBusy) doRemove(w);
-                      }}
+                      onClick=${() => doRemove(w)}
                       style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(rowAction("remove", w), `Remove ${w.name}@${w.repo}`, html`<${Icon} path=${TRASH_PATH} size=${16} />`)}
@@ -1800,12 +1789,9 @@ export default function setup(pocket) {
                     html`<button
                       class="button small"
                       disabled=${toolbarBusy || rowBusy(w)}
-                      aria-disabled=${listingBusy || undefined}
                       title=${`Push ${cachePr.unpushed} commit${cachePr.unpushed === 1 ? "" : "s"} to origin/${w.name} for ${w.name}@${w.repo}`}
                       aria-label=${`Push unpushed commits for ${w.name}@${w.repo}`}
-                      onClick=${() => {
-                        if (!listingBusy) doPush(w);
-                      }}
+                      onClick=${() => doPush(w)}
                       style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(
@@ -1834,16 +1820,13 @@ export default function setup(pocket) {
                     html`<button
                       class="button small"
                       disabled=${toolbarBusy || rowBusy(w)}
-                      aria-disabled=${listingBusy || undefined}
                       title=${
                         mergeReason
                           ? `Cannot merge: ${mergeReason}`
                           : `Merge PR #${cachePr.number}`
                       }
                       aria-label=${`Merge PR #${cachePr.number} for ${w.name}@${w.repo}`}
-                      onClick=${() => {
-                        if (!listingBusy) doMerge(w);
-                      }}
+                      onClick=${() => doMerge(w)}
                       style=${{ ...iconButton(BUTTON_SIZE), ...actionStyle }}
                     >
                       ${inFlight(
@@ -1872,9 +1855,7 @@ export default function setup(pocket) {
                           ? `Open PR #${cachePr.number} for ${w.name}@${w.repo}`
                           : `Open or create a PR for ${w.name}@${w.repo}`
                       }
-                      aria-disabled=${listingBusy || undefined}
                       onClick=${() => {
-                        if (listingBusy) return;
                         if (prUrl) {
                           window.open(prUrl, "_blank", "noopener");
                           return;
