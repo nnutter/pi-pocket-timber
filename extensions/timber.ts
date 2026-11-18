@@ -2870,6 +2870,33 @@ export default function createTimber(host: unknown, web: Web) {
     },
   );
 
+  web.route(
+    "POST",
+    "start-session",
+    async (request): Promise<{ id: number }> => {
+      if (typeof request.createSession !== "function") {
+        throw web.error(
+          501,
+          "Starting a worktree session needs Pi Pocket 0.28.0 or newer.",
+        );
+      }
+      const repo = textField(request.body, "repo");
+      const name = textField(request.body, "name");
+      if (!repo || !name) throw web.error(400, "repo and name are required");
+      const { worktrees } = await readListing();
+      const worktree = worktrees.find(
+        (w) => w.repo === repo && w.name === name,
+      );
+      if (!worktree)
+        throw web.error(404, `Worktree not found: ${name}@${repo}`);
+      return request.createSession({
+        cwd: worktree.path,
+        title: `${name}@${repo}`,
+      });
+    },
+    { access: "owner" },
+  );
+
   // A TODO failure as the status that the panel shows. What the person can
   // fix is theirs; the rest is timber's own report.
   const todoRouteError = (error: unknown): never => {

@@ -12,8 +12,7 @@ Wraps the `timber` CLI on the server (with `gh` for pull requests, and `gh stack
 - [`gh`](https://cli.github.com/) signed in, to read and merge pull requests (`gh auth login`)
 - [`gh stack`](https://github.com/github/gh-stack) to merge a stack of pull requests (`gh extension install github/gh-stack`); without it, the page still reads stacks and merges a single PR, but a stack's merge buttons fail with gh's message
 - `git` (for the worktree's commits and push state)
-- Pi Pocket 0.19.0 or newer (`conversationRoute`, panels, and `cwd` starts).
-  Archiving a removed worktree's sessions and pinning the session's worktree need 0.20.0; an older server leaves those sessions as they are, and lists the worktrees in their plain order.
+- Pi Pocket 0.28.0 or newer to open new worktree sessions through the extension API.
 
 ## Install
 

@@ -222,9 +222,7 @@ export default function setup(pocket) {
   // A panel that docks leaves the session in view, so opening a session keeps it.
   const PANEL_DOCKS = "(min-width: 1100px)";
 
-  // Calls the app's own API as the person in this tab. The module's routes run
-  // on the server, which cannot create or archive a session as a person; the
-  // browser can, with the same calls the app's own pages make.
+  // Archiving still uses the app's own API as the person in this tab.
   async function callApp(path, body) {
     const response = await fetch(`/api/${path}`, {
       method: "POST",
@@ -695,15 +693,11 @@ export default function setup(pocket) {
       }
     };
 
-    // Start a plain session in a worktree's folder and show it. The app's own
-    // endpoint creates it without a link to this session: a linked session
-    // would make this one the root of an Agent Teams team, and the person is
-    // opening a worktree to work in, not to orchestrate. The title is the
-    // Timber name, so a row of sessions says which worktree each one is in.
+    // Start an ordinary session, independent of the conversation in this tab.
     const startSession = async (worktree) => {
-      const payload = await callApp("sessions", {
-        cwd: worktree.path,
-        title: sessionTitle(worktree),
+      const payload = await pocket.api("start-session", {
+        repo: worktree.repo,
+        name: worktree.name,
       });
       const target = payload && payload.id;
       if (typeof target !== "number") {
